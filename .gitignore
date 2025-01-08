@@ -1,5 +1,7 @@
 # Ignore all subfolders
-Scripts/tables
+Scripts/*/
 Scripts/figures
 Scripts/reports
+Scripts/.Rhistory
+
 
