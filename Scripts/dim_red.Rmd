@@ -1,0 +1,185 @@
+---
+title: "Single cell RNA-seq of Plasmodium sporozoite-infected monocytes - dimensionality reduction"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+  toc: TRUE
+---
+
+<!-- ```{r, echo = F} -->
+<!-- # knitr::opts_chunk$set(warning = F, message = F) -->
+<!-- # knitr::opts_chunk$set(fig.pos = "!H", out.extra = "") -->
+<!-- #knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE) -->
+
+<!-- ``` -->
+
+<!-- ```{r load_libraries, echo = F, message = F, warning = F} -->
+<!-- library(Seurat) -->
+<!-- library(patchwork) -->
+<!-- library(readxl) -->
+<!-- library(tidyverse) -->
+<!-- library(ggplot2) -->
+<!-- library(ggpubr) -->
+<!-- library(reshape2) -->
+<!-- library(broom) -->
+<!-- library(stringr) -->
+<!-- remotes::install_github('chris-mcginnis-ucsf/DoubletFinder') -->
+<!-- library(DoubletFinder) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- load("malaria_monocyte_normalised.RData") -->
+<!-- ``` -->
+
+# Step 4: Dimensionality reduction
+
+```{r}
+# Perform linear dimensional reduction
+# 
+# Next we perform PCA on the scaled data. By default, only the previously determined variable features are used as input, but can be defined using features argument if you wish to choose a different subset.
+# 
+mono <- RunPCA(mono, features = VariableFeatures(object = mono))
+#DimPlot(mono,reduction="pca")
+#DimPlot(mono,reduction="pca", group.by = "largest_gene", label = TRUE, label.size = 3)# + NoLegend()
+#DimPlot(mono,reduction="pca", dims=c(3,4))
+# Examine and visualize PCA results a few different ways
+print(mono[["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(mono, dims = 1:2, reduction = "pca")
+
+#DimPlot(mono, reduction = "pca")
+```
+
+```{r}
+# 
+# Determine the ‘dimensionality’ of the dataset
+# 
+# To overcome the extensive technical noise in any single feature for scRNA-seq data, Seurat clusters cells based on their PCA scores, with each PC essentially representing a ‘metafeature’ that combines information across a correlated feature set. The top principal components therefore represent a robust compression of the dataset. However, how many components should we choose to include? 10? 20? 100?
+# 
+# In Macosko et al, we implemented a resampling test inspired by the JackStraw procedure. We randomly permute a subset of the data (1% by default) and rerun PCA, constructing a ‘null distribution’ of feature scores, and repeat this procedure. We identify ‘significant’ PCs as those who have a strong enrichment of low p-value features.
+
+# NOTE: This process can take a long time for big datasets, comment out for expediency. More
+# approximate techniques such as those implemented in ElbowPlot() can be used to reduce
+# computation time
+mono <- JackStraw(mono, num.replicate = 70)
+mono <- ScoreJackStraw(mono, dims = 1:10)
+
+# The JackStrawPlot() function provides a visualization tool for comparing the distribution of p-values for each PC with a uniform distribution (dashed line). ‘Significant’ PCs will show a strong enrichment of features with low p-values (solid curve above the dashed line). In this case it appears that there is a sharp drop-off in significance after the first 10-12 PCs.
+
+JackStrawPlot(mono, dims = 1:10)
+
+ElbowPlot(mono)
+```
+
+```{r}
+DimHeatmap(mono, dims = 1, cells = 1000, balanced = TRUE)
+
+DimHeatmap(mono, dims = 2:5, cells = 1000, balanced = TRUE)
+
+DimHeatmap(mono, dims = 6:20, cells = 1000, balanced = TRUE)
+
+```
+
+
+```{r}
+dims_to_use = 15
+
+```
+
+```{r tsne}
+8482 -> saved.seed
+set.seed(saved.seed)
+
+RunTSNE(
+  mono,
+  dims=1:dims_to_use,
+  seed.use = saved.seed, 
+  perplexity=20
+) -> mono
+
+#DimPlot(mono, group.by = "MULTI_classification", reduction = "tsne", pt.size = 1) + ggtitle("tSNE with Perplexity 20")
+# DimPlot(mono, group.by = "HTO_classification", reduction = "tsne", pt.size = 1) + ggtitle("tSNE with Perplexity 20")
+DimPlot(mono, group.by = "Group", reduction = "tsne", pt.size = 1) + ggtitle("tSNE with Perplexity 20")
+
+RunTSNE(
+  mono,
+  dims=1:dims_to_use,
+  seed.use = saved.seed,
+  perplexity = 70,
+) -> mono
+
+#DimPlot(mono,group.by = "HTO_classification",reduction = "tsne", pt.size = 1) + ggtitle("tSNE with  Perplexity 70")
+DimPlot(mono, group.by = "Group", reduction = "tsne", pt.size = 1) + ggtitle("tSNE with Perplexity 70")
+
+RunTSNE(
+  mono,dims=1:dims_to_use,
+  seed.use = saved.seed, 
+  perplexity=100
+) -> mono
+
+#DimPlot(mono, group.by = "HTO_classification",reduction = "tsne", pt.size = 1) + ggtitle("tSNE with Perplexity 100")
+DimPlot(mono, group.by = "Group", reduction = "tsne", pt.size = 1) + ggtitle("tSNE with Perplexity 100")
+
+# We can see the differences in clustering between the different perplexities - the structures aren’t completely different but the compactness of them and the emphasis on smaller clusters certainly changes. We can also see that there isn’t a huge effect of cell cycle in that all cycles are generally represented in all clusters, with maybe one cluster being somewhat depleted for cells in S-phase.
+```
+
+```{r}
+# Cluster the cells
+
+mono <- FindNeighbors(mono, dims = 1:dims_to_use)
+mono@graphs$RNA_snn[1:20,1:20]
+
+# DimPlot(mono,reduction="pca",label = TRUE)+ggtitle("PC1 vs PC2 with Clusters")
+# DimPlot(mono,reduction="pca", dims=c(4,9), label=TRUE)+ggtitle("PC4 vs PC9 with Clusters")
+#DimPlot(mono)
+# DimPlot(mono, group_by = "RNA_snn_res.0.6")
+# DimPlot(mono, group_by = "RNA_snn_res.0.1")
+# DimPlot(mono, group_by = "RNA_snn_res.1.2")
+
+# Look at cluster IDs of the first 5 cells
+#head(Idents(mono), 5)
+```
+
+```{r}
+# Run UMAP
+
+# Seurat offers several non-linear dimensional reduction techniques, such as tSNE and UMAP, to visualize and explore these datasets. The goal of these algorithms is to learn the underlying manifold of the data in order to place similar cells together in low-dimensional space. Cells within the graph-based clusters determined above should co-localize on these dimension reduction plots. As input to the UMAP and tSNE, we suggest using the same PCs as input to the clustering analysis.
+
+table(samplesheet$`Patient Group`, samplesheet$`Multiplex Tag`)
+
+mono <- FindClusters(mono, resolution = 1.0)
+mono <- RunUMAP(mono, dims = 1:dims_to_use)
+
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+#DimPlot(mono, group.by = "HTO_classification", reduction = "umap", label = "T")
+DimPlot(mono, group.by = "donor_id", reduction = "umap", label = "F")
+DimPlot(mono, group.by = "Group", reduction = "umap", label = "T")
+
+mono <- FindClusters(mono, resolution = 0.9)
+mono <- RunUMAP(mono, dims = 1:dims_to_use)
+
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+#DimPlot(mono,group.by = "HTO_classification", reduction = "umap", label = "T")#
+DimPlot(mono, group.by = "donor_id",reduction = "umap", label = "F")
+DimPlot(mono, group.by = "Group",reduction = "umap", label = "F")
+DimPlot(mono, group.by = "seurat_clusters",reduction = "umap", label = "T")
+# 
+# mono <- FindClusters(mono, resolution = 1.2)
+# mono <- RunUMAP(mono, dims = 1:10)
+# 
+# # note that you can set `label = TRUE` or use the LabelClusters function to help label
+# # individual clusters
+# DimPlot(mono,group.by = "HTO_classification", reduction = "umap", label = "T")
+# DimPlot(mono, group.by = "donor_id",reduction = "umap", label = "T")
+table(mono@meta.data$Group)
+
+table(mono@meta.data$donor_id)
+```
+
+```{r}
+# save.image("malaria_monocyte_DimRed_umap.RData")
+# save(mono, file = "mono_dim_red_umap.RData")
+```

@@ -1,0 +1,418 @@
+---
+title: "VDJ sequencing - HUSTLE-Seq - quality control"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  toc: TRUE
+---
+
+```{r, echo = F}
+knitr::opts_chunk$set(warning = F, message = F)
+# knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
+#knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE)
+
+```
+
+<!-- ```{r load_libraries, echo = F, message = F, warning = F} -->
+<!-- library(Seurat) -->
+<!-- library(patchwork) -->
+<!-- library(readxl) -->
+<!-- library(tidyverse) -->
+<!-- library(ggplot2) -->
+<!-- library(ggpubr) -->
+<!-- library(reshape2) -->
+<!-- library(broom) -->
+<!-- library(stringr) -->
+<!-- # remotes::install_github('chris-mcginnis-ucsf/DoubletFinder') -->
+<!-- # library(DoubletFinder) -->
+<!-- ``` -->
+
+# Step 1: Load filtered features, barcode, matrices and visualise quality
+
+Lib: D13_D33_D45_D47_CD4_Naive
+
+```{r datadiscovery, echo = F}
+
+#samplesheet <- read_excel("../Data/a_2024_HUSTLEseq_scRNAseq_nucleotide_sequencing.xlsx")
+samplesheet <- read_excel("../Data/a_2024_HUSTLEseq_scRNAseq_nucleotide_sequencing_round2.xlsx")
+
+colnames(samplesheet) <- sapply(c(1:ncol(samplesheet)), function(x) paste0(samplesheet[1,x], colnames(samplesheet)[x], collapse = ""))
+
+samplesheet <- samplesheet %>% 
+  filter(!row_number() %in% c(1)) %>% 
+  rename(Library_name = `NameLibrary Name`) %>% 
+  rename(Antibody = `Multiplex Source Tag...31`)
+
+# table(samplesheet$`Multiplex Tag`, samplesheet$Library_name)
+#
+# table(samplesheet$Condition_name, samplesheet$Library_name)
+#
+# libraries <- unique(samplesheet$Library_name)
+#
+# lib_name = "D33_D45_D47_CD4_Tcells"
+# lib_name = "D13_D33_D45_D47_CD4_Naive"
+# lib_name = "D13_D33_D45_D47_CD4_Proliferated_L1"
+lib_name = "D13_D33_D45_D47_CD4_Proliferated_L2"
+d <- samplesheet %>% filter(Library_name == lib_name)
+
+
+# Antibody column needs to be changed from Total_Seq to TotalSeq
+samplesheet <- samplesheet %>%
+  mutate(Antibody = gsub("Total_Seq", "TotalSeq", Antibody))
+```
+
+The hastag antibodies used were:
+```{r hto_used}
+
+# lib name
+hto_used = samplesheet %>%
+    filter(Library_name == lib_name) %>%
+    pull(Antibody) %>%
+    unique
+
+hto_used
+```
+
+Number of features (genes) and samples (cells) in this library
+```{r load_libs}
+# Load the PBMC dataset
+data <- Read10X(data.dir = paste0("../Data/",lib_name,"/filtered_feature_bc_matrix/"))
+# for CellBender, do on cmd:
+# ptrepack --complevel 5 output.h5:/matrix output_filtered_seurat.h5:/matrix
+
+# output from Cellbender:
+
+#data <- Read10X(data.dir = paste0("../Data/",lib_name,"/sample_filtered_feature_bc_matrix/"))
+#data <- Read10X_h5(filename = "../Data/D33_D45_D47_CD4_Tcells/h5/output_filtered_seurat.h5")
+gex <- data[[1]]
+hto <- data[["Antibody Capture"]][rownames(data[["Antibody Capture"]]) %in% hto_used, ]
+
+# remove SCoV2 genes
+# plasmo.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7"),] # assay with Plasmodium genes
+# human.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7", invert = T),]
+
+
+# Initialize the Seurat object with the raw (non-normalized data).
+#mono <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
+options(Seurat.object.assay.calcn = TRUE)
+hustle <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 10)
+hustle
+```
+
+```{r}
+hustle[["percent.mt"]] <- PercentageFeatureSet(hustle, pattern = "^MT-")
+# ribo genes
+ribo.genes <- grep("^RP[SL][[:digit:]]|^RPLP[[:digit:]]|^RPSA",rownames(hustle),value = TRUE)
+ribo.genes <- grep("[BK-]|AP|[[:digit:]](.+)L",ribo.genes,value = TRUE, invert = T)
+# percent.ribo <- colSums(hustle[ribo.genes, ])/colSums(hustle)
+# hustle <- AddMetaData(object = hustle, metadata = percent.ribo, col.name = "percent.ribo")
+hustle[["percent.ribo"]] <- PercentageFeatureSet(object = hustle, features = ribo.genes)
+head(hustle@meta.data, 5)
+
+```
+
+Demultiplex: Assign donor to cells - singlets, doublets, negatives using vireo
+
+a) match donor ID with samples (cells) 
+```{r demultiplexing_vireo}
+
+# install / upgrade vireoSNP using pip install --upgrade --no-deps vireoSNP
+# vireo to check installation errors
+# download all cellSNP file from library -> save vcf file as .gz, leave others un-gzipped
+# error: index out of range -> solved by downloading the files again and redoing vireo
+# command line: vireo -c cellSNP_mat/ -N 3 -o vireo_result/ for 3 donors
+
+# add vireo output to meta data
+hustle.demul <- hustle
+snp <- read.delim(paste("../Data/",lib_name,"/vireo_result/donor_ids.tsv", sep = ""))
+meta <- hustle.demul@meta.data %>% 
+  tibble::rownames_to_column("cell") %>% 
+  left_join(snp)
+
+table(meta$donor_id)
+# remove doublets and unassigned
+hustle.demul@meta.data <- meta
+
+hustle.demul@meta.data <- hustle.demul@meta.data %>% 
+  as.data.frame() %>% 
+  tibble::column_to_rownames("cell")
+
+## didn't need the next line for CellBender output:
+Idents(hustle.demul) <- "donor_id"
+hustle.demul <- subset(x = hustle.demul, idents = c("doublet", "unassigned"), invert = T)
+
+hustle <- hustle.demul
+
+# identical(meta$cell, rownames(mono@meta.data))
+# [1] TRUE
+```
+
+b) Demultiplexing with hastag oligos -> identify cells with tagged barcodes (# of barcodes (Ab) = # of donors)
+```{r Demultiplexing_HTO}
+#Cell Hashing uses oligo-tagged antibodies against ubuquitously expressed surface proteins to place a “sample barcode” on each single cell, enabling different samples to be multiplexed together and run in a single experiment.
+
+# Select cell barcodes detected by both RNA and HTO In the example datasets we have already
+# filtered the cells for you, but perform this step for clarity.
+
+hustle.singlet.donor <- hustle
+joint.bcs <- intersect(rownames(hustle.singlet.donor@meta.data), colnames(hto))
+
+# identical(colnames(pbmc@assays$RNA), rownames(pbmc@meta.data))
+# [1] TRUE
+
+# Subset RNA and HTO counts by joint cell barcodes
+#pbmc@assays$RNA <- pbmc@assays$RNA[, joint.bcs]
+hustle.hto <- as.matrix(hto[,joint.bcs])
+
+## # Add HTO data as a new assay independent from RNA
+Idents(hustle.singlet.donor) <- rownames(hustle.singlet.donor@meta.data)
+hustle.singlet.donor[["HTO"]] <- CreateAssayObject(counts = hustle.hto)
+
+# Normalize HTO data, here we use centered log-ratio (CLR) transformation
+hustle.singlet.donor <- NormalizeData(hustle.singlet.donor, assay = "HTO", normalization.method = "CLR")
+
+# If you have a very large dataset we suggest using k_function = 'clara'. This is a k-medoid
+# clustering function for large applications You can also play with additional parameters (see
+# documentation for HTODemux()) to adjust the threshold for classification Here we are using
+# the default settings
+hustle.singlet.donor <- HTODemux(hustle.singlet.donor, assay = "HTO", positive.quantile = 0.99) #, positive.quantile = 0.99
+#hustle.singlet.donor <- MULTIseqDemux(hustle.singlet.donor, assay = "HTO")
+
+```
+
+
+```{r plots_dem}
+
+# Global classification results
+table(hustle.singlet.donor$HTO_classification.global)
+#table(hustle.singlet.donor$MULTI_classification)
+
+Idents(hustle.singlet.donor) <- "HTO_classification.global"
+#Idents(hustle.singlet.donor) <- "MULTI_classification"
+VlnPlot(hustle.singlet.donor, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.1, log = F)
+#VlnPlot(hustle.singlet.donor, features = c("percent.mt", "percent.plasmo"), pt.size = 0.1, log = TRUE)
+hustle.h <- hustle.singlet.donor
+
+# First, we will remove negative cells from the object
+# if(any(hustle.h$MULTI_classification == "Negative") == T)
+#   hustle.h <- subset(hustle.h, idents = c("Negative"), invert = TRUE)
+
+if(any(hustle.h$HTO_classification.global == "Negative") == T)
+   hustle.h <- subset(hustle.h, idents = c("Negative"), invert = TRUE)
+
+# Calculate a tSNE embedding of the HTO data
+DefaultAssay(hustle.h) <- "HTO"
+hustle.h <- ScaleData(hustle.h, features = rownames(hustle.h),
+    verbose = FALSE)
+hustle.h <- RunPCA(hustle.h, features = rownames(hustle.h), approx = FALSE)
+hustle.h <- RunTSNE(hustle.h, check_duplicates = F)
+Idents(hustle.h) <- 'HTO_classification'
+#Idents(hustle.h) <- 'MULTI_classification'
+#DimPlot(hustle.h)
+
+
+
+# To increase the efficiency of plotting, you can subsample cells using the num.cells argument
+#HTOHeatmap(hustle, assay = "HTO", ncells = 500)
+```
+
+Features and samples after assigning cells to donors and retaining only singlets
+```{r}
+Idents(hustle.singlet.donor) = "HTO_classification"
+# Extract singlets
+#hashtags <- gsub("Total_Seq", "TotalSeq", hto_used)
+hashtags <- gsub("_", "-", hto_used)
+
+# hustle.singlet.donor@meta.data <- hustle.singlet.donor@meta.data %>%
+#   mutate(Cell_state = case_when(
+#     as.character(MULTI_classification) %in% hashtags ~ "Singlet",
+#     .default = MULTI_classification
+#   ))
+
+#Idents(hustle.singlet.donor) <- "Cell_state"
+
+#hustle.singlet <- subset(hustle.singlet.donor, subset = Cell_state == "Singlet")
+
+# For HTODemux:
+hustle.singlet.donor = hustle.h
+Idents(hustle.singlet.donor) = "HTO_classification.global"
+hustle.singlet <- subset(hustle.singlet.donor, idents = "Singlet")
+hustle.singlet
+
+# donorid <- samplesheet %>%
+#   filter(Library_name == lib_name) %>%
+#   dplyr::rename(HTO_classification = Antibody) %>%
+#   #mutate(HTO_classification = gsub("_", "-", HTO_classification)) %>%
+#   dplyr::rename(Group = `Patient Group`) %>%
+#   select(Group, HTO_classification) %>%
+#   distinct()
+
+# donorid <- samplesheet %>%
+#   filter(Library_name == lib_name) %>%
+#   dplyr::rename(MULTI_classification = Antibody) %>%
+#   mutate(MULTI_classification = gsub("_", "-", MULTI_classification)) %>%
+#   dplyr::rename(Group = `Patient Group`) %>%
+#   select(Group, MULTI_classification) %>%
+#   distinct()
+
+hustle.demul <- hustle.singlet
+# hustle.demul@meta.data <- hustle.demul@meta.data %>% 
+#   left_join(., donorid)
+
+rownames(hustle.demul@meta.data) <- rownames(hustle.singlet@meta.data)
+#rownames(hustle.singlet@meta.data)
+hustle <- hustle.singlet
+
+```
+
+QC for number of RNA molecules (nCount_RNA), number of features (nFeature_RNA), mitochondrial RNA percent denoting dead cells (percent.mt) and ribosomal genes percentage (NA cells because of unmatched CellBender cell filtration)
+```{r Visviolin}
+# Visualize QC metrics as a violin plot
+DefaultAssay(hustle) <- "RNA"
+Idents(hustle) <- "orig.ident"
+VlnPlot(hustle, features=c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 3) 
+VlnPlot(hustle, features=c("percent.ribo")) 
+
+ggplot(hustle@meta.data, aes(x = nFeature_RNA)) + geom_histogram(binwidth = 50)
+#ggplot(mono@meta.data, aes(x = nFeature_RNA)) + geom_histogram(binwidth = 20) + xlim(c(0, 600))
+
+ggplot(hustle@meta.data, aes(x = nFeature_RNA)) + 
+  geom_histogram(binwidth = 50) +
+  facet_wrap( ~ donor_id)
+
+ggplot(hustle@meta.data, aes(x = nCount_RNA)) + geom_histogram(binwidth = 50)
+ggplot(hustle@meta.data, aes(x = nCount_RNA)) + 
+  geom_histogram(binwidth = 50) +
+  facet_wrap( ~ donor_id)
+#ggplot(mono@meta.data, aes(x = nCount_RNA)) + geom_histogram(binwidth = 50) + xlim(c(0, 5000))
+
+ggplot(hustle@meta.data, aes(x = percent.mt)) + geom_histogram(binwidth = 1)
+ggplot(hustle@meta.data, aes(x = percent.mt)) + 
+  geom_histogram(binwidth = 1) +
+  facet_wrap( ~ donor_id)
+
+ggplot(hustle@meta.data, aes(x = percent.ribo)) + geom_histogram(binwidth = 1)
+ggplot(hustle@meta.data, aes(x = percent.ribo)) + 
+  geom_histogram(binwidth = 1) +
+  facet_wrap( ~ donor_id)
+
+
+#ggplot(mono@meta.data, aes(x = percent.Ribosomal)) + geom_histogram(binwidth = 1)
+
+#ggplot(mono@meta.data, aes(x = percent.Largest.Gene)) + geom_histogram(binwidth = 1)
+
+```
+
+```{r}
+deadcell_nF_lowercutoff <- 250
+deadcell_nF_uppercutoff <- 3500
+deadcell_nC_lowercutoff <- 1250
+#weirdcell_ribo_uppercutoff <- 40
+deadcell_mt_cutoff <- 12
+
+hustle.meta <- hustle@meta.data %>% 
+  mutate(is.dead = case_when(
+      nFeature_RNA >= deadcell_nF_lowercutoff & 
+        nFeature_RNA <= deadcell_nF_uppercutoff &
+        #percent.ribo <= weirdcell_ribo_uppercutoff &
+        nCount_RNA >= deadcell_nC_lowercutoff &
+        percent.mt <= deadcell_mt_cutoff ~ "FALSE",
+      TRUE ~ "TRUE"))
+
+table(hustle.meta$is.dead)
+
+ggplot(hustle.meta, aes(x = nFeature_RNA, fill = factor(is.dead))) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.5)
+
+ggplot(hustle.meta, aes(x = nCount_RNA, fill = factor(is.dead))) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.5)
+
+ggplot(hustle.meta, aes(x = percent.mt, fill = factor(is.dead))) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.5)
+
+ggplot(hustle.meta, aes(x = percent.ribo, fill = factor(is.dead))) +
+  geom_histogram(bins = 50, position = "identity", alpha = 0.5)
+```
+
+
+```{r filtering}
+hustle1 <- subset(hustle, subset =  nFeature_RNA >= deadcell_nF_lowercutoff & 
+                    nFeature_RNA <= deadcell_nF_uppercutoff & 
+                    percent.mt <= deadcell_mt_cutoff &
+                    nCount_RNA >= deadcell_nC_lowercutoff 
+                    #percent.ribo <= weirdcell_ribo_uppercutoff
+                    ) #nCount_RNA >= 1000 &
+hustle1
+VlnPlot(hustle1, features=c("nCount_RNA", "nFeature_RNA", "percent.mt", "percent.ribo"), group.by = "orig.ident", ncol = 2) 
+
+hustle = hustle1
+
+```
+
+Assigning hashtags and peptide pools to cells
+```{r}
+# assigning cell to donor and pool
+
+hustle@meta.data <- hustle@meta.data %>% 
+  mutate(Donor_expt = case_when(
+    HTO_classification == "TotalSeq-C-1" ~ "D13",
+    HTO_classification == "TotalSeq-C-2" ~ "D33",
+    HTO_classification == "TotalSeq-C-3" ~ "D45",
+    HTO_classification == "TotalSeq-C-4" ~ "D47",
+    .default = ""
+  )) %>% 
+  mutate(pep.pool = case_when(
+    HTO_classification == "TotalSeq-C-5" ~ "P2",
+    HTO_classification == "TotalSeq-C-6" ~ "P3",
+    HTO_classification == "TotalSeq-C-7" ~ "P4",
+    HTO_classification == "TotalSeq-C-8" ~ "P5",
+    HTO_classification == "TotalSeq-C-9" ~ "P6",
+    HTO_classification == "TotalSeq-C-10" ~ "P7",
+    HTO_classification == "TotalSeq-C-11" ~ "P8",
+    HTO_classification == "TotalSeq-C-12" ~ "P9",
+    HTO_classification == "TotalSeq-C-2" ~ "P1",
+    HTO_classification == "TotalSeq-C-3" ~ "P1",
+    HTO_classification == "TotalSeq-C-4" ~ "P1",
+    HTO_classification == "TotalSeq-C-1" ~ "P1",
+    .default = ""
+  ))
+
+# get donor id from SNP for assigning D33, D45, D47
+
+donorid_snp_hto <- hustle@meta.data %>% 
+  dplyr::select(Donor_expt, donor_id) %>% 
+  filter(Donor_expt != "") %>% 
+  filter(!donor_id %in% c("doublet", "unassigned")) %>% 
+  group_by(donor_id) %>% 
+  count(Donor_expt, donor_id)
+
+#Put them back in hustle meta data
+
+hustle@meta.data <- hustle@meta.data %>% 
+  mutate(Donor_expt = case_when(
+    HTO_classification == "TotalSeq-C-1" ~ "D13",
+    HTO_classification == "TotalSeq-C-2" ~ "D33",
+    HTO_classification == "TotalSeq-C-3" ~ "D45",
+    HTO_classification == "TotalSeq-C-4" ~ "D47",
+    donor_id == "donor0" ~ "D47",
+    donor_id == "donor1" ~ "D33",
+    donor_id == "donor2" ~ "D13",
+    donor_id == "donor3" ~ "D45",
+    .default = ""
+  )) %>% 
+  filter(!is.na(donor_id)) %>% 
+  mutate(donor_pep.pool = paste(Donor_expt, pep.pool, sep = "_"))
+
+# # remove left over unassigned and doublet "cells"
+# Idents(hustle) <- c("donor_id")
+# hustle <- subset(hustle, idents = c("doublet", "unassigned"), invert = T)
+
+table(hustle$Donor_expt)
+table(hustle$pep.pool)
+table(hustle$Donor_expt, hustle$pep.pool)
+table(hustle$donor_pep.pool)
+
+
+```
+
