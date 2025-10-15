@@ -1,0 +1,188 @@
+---
+title: "Differential gene expression"
+output: html_notebook
+---
+
+```{r load_libraries, echo = F, message = F, warning = F}
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+library(broom)
+library(stringr)
+library(ggplot2)
+library(cowplot)
+library(RColorBrewer)
+library(data.table)
+library(DropletUtils)
+# devtools::install_github("satijalab/seurat", "seurat5")
+# devtools::install_github("satijalab/seurat-data", "seurat5")
+# BiocManager::install("DirichletMultinomial")
+# install.packages("hdf5r")
+# remotes::install_github("mojaveazure/seurat-disk")
+# BiocManager::install("TFBSTools")
+# remotes::install_github('satijalab/azimuth', ref = 'master')
+library(Azimuth)
+
+```
+
+```{r}
+integrated <- readRDS("robjects/naive_merged_with_integrated_proliferated_L1_L2.rds")
+clonotype <- read.csv2("../Data/HUSTLEseq_mapped_clean.csv")
+```
+
+```{r}
+integrated@meta.data <- integrated@meta.data %>% 
+  mutate(Barcode = rownames(.)) %>% 
+  mutate(Barcode = gsub(".*_", "", Barcode))
+
+umap <- integrated@reductions[["umap_cca"]]@cell.embeddings[,1:2]
+
+integrated_df <- data.frame(
+  integrated@meta.data[,c("orig.ident", 
+                          "Donor_expt", 
+                          "seurat_clusters", 
+                          "HTO_classification", 
+                          "pep.pool", 
+                          "donor_pep.pool", 
+                          "Barcode")], 
+  umap)
+
+pheno_clono <- left_join(clonotype, 
+                         integrated_df, 
+                         by = "Barcode") %>% 
+  distinct(Barcode,
+           .keep_all = T)
+
+```
+
+```{r}
+
+# clonotype gene markers
+integrated_cl <- integrated
+
+integrated_cl@meta.data <- integrated_cl@meta.data %>%
+  mutate(cellID = rownames(.))
+
+integrated_cl1 <- integrated_cl@meta.data %>% 
+  left_join(., pheno_clono, by = "Barcode")
+
+integrated_cl@meta.data <- integrated_cl1 %>% 
+  tibble::column_to_rownames("cellID")
+
+integrated_cl <- subset(integrated_cl, 
+                        subset = (Barcode %in% integrated_cl1$Barcode))
+
+# all(rownames(integrated_cl@meta.data) == colnames(integrated_cl))
+# [1] TRUE
+
+integrated_cl <- subset(integrated_cl, 
+                        subset = !is.na(Epitope.1))
+```
+
+```{r}
+clonotype_marker_68_24 <- FindMarkers(integrated_cl,
+                                group.by = "Epitope.1", 
+                                ident.1 = "68", 
+                                ident.2 = "24", 
+                                only.pos = F) %>% 
+  mutate(gene = rownames(.))
+
+EnhancedVolcano(clonotype_marker_68_24,
+  lab = clonotype_marker_68_24$gene,
+  x = 'avg_log2FC',
+  y = 'p_val_adj',
+  ylab = bquote(~-Log[10]~ 'adjusted p-value'),
+  #pCutoff = 10e-5,
+  #FCcutoff = 1.5,
+  pointSize = 3.0,
+  #boxedLabels = F,
+  #labSize = NA,
+  col=c('grey48', 'grey48', 'grey48', 'red3'),
+  colAlpha = 0.7,
+  xlim = c(-3.5,3.5),
+  title = 'Epitope 24 <-- vs --> 68',
+  gridlines.major = FALSE,
+  gridlines.minor = FALSE)
+```
+```{r}
+clonotype_marker_68_28 <- FindMarkers(integrated_cl,
+                                group.by = "Epitope.1", 
+                                ident.1 = "68", 
+                                ident.2 = "28", 
+                                only.pos = F) %>% 
+  mutate(gene = rownames(.))
+
+EnhancedVolcano(clonotype_marker_68_28,
+  lab = clonotype_marker_68_28$gene,
+  x = 'avg_log2FC',
+  y = 'p_val_adj',
+  ylab = bquote(~-Log[10]~ 'adjusted p-value'),
+  #pCutoff = 10e-5,
+  #FCcutoff = 1.5,
+  pointSize = 3.0,
+  #boxedLabels = F,
+  #labSize = NA,
+  col=c('grey48', 'grey48', 'grey48', 'red3'),
+  colAlpha = 0.7,
+  xlim = c(-3.5,3.5),
+  title = 'Epitope 28 <-- vs --> 68',
+  gridlines.major = FALSE,
+  gridlines.minor = FALSE)
+```
+
+```{r}
+clonotype_marker_68_38 <- FindMarkers(integrated_cl,
+                                group.by = "Epitope.1", 
+                                ident.1 = "68", 
+                                ident.2 = "38", 
+                                only.pos = F) %>% 
+  mutate(gene = rownames(.))
+
+EnhancedVolcano(clonotype_marker_68_38,
+  lab = clonotype_marker_68_38$gene,
+  x = 'avg_log2FC',
+  y = 'p_val_adj',
+  ylab = bquote(~-Log[10]~ 'adjusted p-value'),
+  #pCutoff = 10e-5,
+  #FCcutoff = 1.5,
+  pointSize = 3.0,
+  #boxedLabels = F,
+  #labSize = NA,
+  col=c('grey48', 'grey48', 'grey48', 'red3'),
+  colAlpha = 0.7,
+  xlim = c(-3.5,3.5),
+  title = 'Epitope 38 <-- vs --> 68',
+  gridlines.major = FALSE,
+  gridlines.minor = FALSE)
+```
+
+```{r}
+clonotype_marker_68_10 <- FindMarkers(integrated_cl,
+                                group.by = "Epitope.1", 
+                                ident.1 = "68", 
+                                ident.2 = "10", 
+                                only.pos = F) %>% 
+  mutate(gene = rownames(.))
+
+EnhancedVolcano(clonotype_marker_68_10,
+  lab = clonotype_marker_68_10$gene,
+  x = 'avg_log2FC',
+  y = 'p_val_adj',
+  ylab = bquote(~-Log[10]~ 'adjusted p-value'),
+  #pCutoff = 10e-5,
+  #FCcutoff = 1.5,
+  pointSize = 3.0,
+  #boxedLabels = F,
+  #labSize = NA,
+  col=c('grey48', 'grey48', 'grey48', 'red3'),
+  colAlpha = 0.7,
+  xlim = c(-3.5,3.5),
+  title = 'Epitope 10 <-- vs --> 68',
+  gridlines.major = FALSE,
+  gridlines.minor = FALSE)
+```
+

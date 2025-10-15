@@ -1,0 +1,160 @@
+---
+title: "VDJ sequencing - integration of libraries"
+output: html_notebook
+---
+
+
+```{r opts, echo = F}
+knitr::opts_chunk$set(warning = F, message = F)
+# knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
+#knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+
+```
+
+
+```{r load_libraries, echo = F, message = F, warning = F}
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+library(broom)
+library(stringr)
+library(ggplot2)
+library(cowplot)
+library(RColorBrewer)
+library(data.table)
+library(DropletUtils)
+```
+
+```{r}
+naive <- readRDS("robjects/cellbender_CCregressed_D13_D33_D45_D47_CD4_Naive_nF_250_1200_nC_500_post_demultiplexed_full_processed.rds")
+prol1 <- readRDS("robjects/cellbender_CCregressed_D13_D33_D45_D47_CD4_Proliferated_L1_nF_500_6000_nC_250_post_demultiplexed_full_processed.rds")
+prol2 <- readRDS("robjects/cellbender_CCregressed_D13_D33_D45_D47_CD4_Proliferated_L2_nF_500_4000_nC_150_post_demultiplexed_full_processed.rds")
+```
+
+```{r}
+# Before integration
+
+hustle <- merge(naive, y = c(prol1, prol2), add.cell.ids = c("Naive", "Proliferated_L1", "Proliferated_L2"), project = "HUSTLEseq")
+hustle
+table(hustle$orig.ident)
+
+# run standard anlaysis workflow
+hustle <- NormalizeData(hustle)
+hustle <- FindVariableFeatures(hustle)
+hustle <- ScaleData(hustle)
+hustle <- RunPCA(hustle)
+
+hustle <- FindNeighbors(hustle, dims = 1:30, reduction = "pca")
+hustle <- FindClusters(hustle, resolution = 2, cluster.name = "unintegrated_clusters")
+hustle <- RunUMAP(hustle, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+
+before <- data.frame(hustle@reductions[["umap.unintegrated"]]@cell.embeddings, orig.ident = hustle$orig.ident, donor = hustle$Donor_expt)
+
+ggplot(before, aes(x = umapunintegrated_1, y = umapunintegrated_2, colour = orig.ident)) +
+  geom_point(size = 0.2, alpha = 0.7) +
+  theme_bw() +
+  scale_colour_manual(values = c("chocolate", 
+                                 "blue4",
+                                 "darkolivegreen3"
+                                 )) +
+  ggtitle("Before Integration")
+
+ggplot(before, aes(x = umapunintegrated_1, y = umapunintegrated_2, colour = donor)) +
+  geom_point(size = 0.2, alpha = 0.7) +
+  theme_bw() +
+  scale_colour_manual(values = c("chocolate", 
+                                 "blue4",
+                                 "darkolivegreen3",
+                                 "darkslategray3"
+                                 )) +
+  ggtitle("Before Integration")
+```
+
+```{r}
+# Integration:
+# Don't integrate naive and proliferated, just integrate the two proliferated libs
+
+prol_merged <- merge(prol1, prol2, add.cell.ids = c("Proliferated_L1", "Proliferated_L2"), project = "HUSTLEseq")
+
+# prol_merged %>%
+#     SCTransform() %>%
+#     RunPCA() %>%
+#     FindNeighbors(dims = 1:30) %>%
+#     RunUMAP(dims = 1:30) %>%
+#     FindClusters() -> prol_sct
+# 
+# prol_sct <- JoinLayers(prol_sct[["RNA"]])
+# prol_sct[["RNA"]] <- split(prol_sct[["RNA"]], f = prol_sct$orig.ident)
+
+prol_merged <- NormalizeData(prol_merged)
+prol_merged <- FindVariableFeatures(prol_merged)
+prol_merged <- ScaleData(prol_merged)
+prol_merged <- RunPCA(prol_merged)
+
+prol_merged <- FindNeighbors(prol_merged, dims = 1:10, reduction = "pca")
+prol_merged <- FindClusters(prol_merged, resolution = 2, cluster.name = "merged_prol_libs")
+prol_merged <- RunUMAP(prol_merged, dims = 1:10, reduction = "pca", reduction.name = "umap._merged_prol_libs")
+
+prol_integrated <- IntegrateLayers(object = prol_merged, 
+                              method = CCAIntegration, 
+                              orig.reduction = "pca", 
+                              #layers = c("D13_D33_D45_D47_CD4_Proliferated_L1","D13_D33_D45_D47_CD4_Proliferated_L2"),
+                              new.reduction = "integrated.proliferated.cca",
+    verbose = T) #(this uses PCA, so is run as "after" PCA and repeat the steps that follow)
+
+prol_integrated <- JoinLayers(prol_integrated)
+
+DimPlot(prol_integrated, reduction = "umap._merged_prol_libs")
+
+merge_all_libs <- merge(naive, prol_integrated, add.cell.ids = c("Naive", "Proliferated"), project = "HUSTLEseq")
+merge_all_libs <- NormalizeData(merge_all_libs)
+merge_all_libs <- FindVariableFeatures(merge_all_libs)
+merge_all_libs <- ScaleData(merge_all_libs)
+merge_all_libs <- RunPCA(merge_all_libs)
+
+merge_all_libs <- FindNeighbors(merge_all_libs, reduction = "pca", dims = 1:30)
+merge_all_libs <- FindClusters(merge_all_libs, resolution = 1)
+merge_all_libs <- RunUMAP(merge_all_libs, dims = 1:30, reduction = "pca", reduction.name = "umap_cca")
+
+after <- data.frame(merge_all_libs@reductions[["umap_cca"]]@cell.embeddings, orig.ident = merge_all_libs$orig.ident, donor = merge_all_libs$Donor_expt)
+
+ggplot(after, aes(x = umapcca_1, y = umapcca_2, colour = orig.ident)) +
+  geom_point(size = 0.2, alpha = 0.7) +
+  theme_bw() +
+  scale_colour_manual(values = c("chocolate", 
+                                 "blue4",
+                                 "darkolivegreen3"
+                                 )) +
+  ggtitle("After Integration")
+
+ggplot(after, aes(x = umapcca_1, y = umapcca_2, colour = donor)) +
+  geom_point(size = 0.2, alpha = 0.7) +
+  theme_bw() +
+  scale_colour_manual(values = c("chocolate", 
+                                 "blue4",
+                                 "darkolivegreen3",
+                                 "darkslategray3")) +
+  ggtitle("After Integration")
+
+#ggsave("Before_and_after_integration_onlyhuman_2l2_merged_2l3_then_integrated.pdf")
+merge_all_libs <- JoinLayers(merge_all_libs)
+```
+
+```{r}
+new_barcodes <- gsub("Proliferated_", "", colnames(merge_all_libs))
+
+# Assign the new barcodes
+colnames(merge_all_libs) <- new_barcodes
+rownames(merge_all_libs@meta.data) <- new_barcodes
+```
+
+
+```{r}
+saveRDS(merge_all_libs, file = "robjects/naive_merged_with_integrated_proliferated_L1_L2.rds")
+```
+

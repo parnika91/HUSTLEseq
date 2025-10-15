@@ -1,0 +1,352 @@
+
+---
+title: "VDJ sequencing - HUSTLE-Seq - UMI counts + cell barcode exctraction"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  toc: TRUE
+---
+
+
+```{r load_libraries, echo = F, message = F, warning = F}
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+library(broom)
+library(stringr)
+library(ggplot2)
+library(cowplot)
+library(RColorBrewer)
+library(data.table)
+library(DropletUtils)
+#library(hdfr5)
+#remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')
+#library(DoubletFinder)
+# devtools::install_github("satijalab/seurat-data")
+#devtools::install_github("satijalab/azimuth")
+#library(Azimuth)
+# library(SeuratData)
+```
+
+```{r datadiscovery, echo = F}
+
+#samplesheet <- read_excel("../Data/a_2024_HUSTLEseq_scRNAseq_nucleotide_sequencing.xlsx")
+samplesheet <- read_excel("../Data/a_2024_HUSTLEseq_scRNAseq_nucleotide_sequencing_round2.xlsx")
+
+colnames(samplesheet) <- sapply(c(1:ncol(samplesheet)), function(x) paste0(samplesheet[1,x], colnames(samplesheet)[x], collapse = ""))
+
+samplesheet <- samplesheet %>% 
+  filter(!row_number() %in% c(1)) %>% 
+  dplyr::rename(Library_name = `NameLibrary Name`) %>% 
+  dplyr::rename(Antibody = `Multiplex Source Tag...31`)
+
+# table(samplesheet$`Multiplex Tag`, samplesheet$Library_name)
+#
+# table(samplesheet$Condition_name, samplesheet$Library_name)
+#
+# libraries <- unique(samplesheet$Library_name)
+#
+# lib_name = "D33_D45_D47_CD4_Tcells"
+# lib_name = "D13_D33_D45_D47_CD4_Naive"
+# lib_name = "D13_D33_D45_D47_CD4_Proliferated_L1"
+lib_name = "D13_D33_D45_D47_CD4_Naive"
+d <- samplesheet %>% filter(Library_name == lib_name)
+
+
+# Antibody column needs to be changed from Total_Seq to TotalSeq
+samplesheet <- samplesheet %>%
+  mutate(Antibody = gsub("Total_Seq", "TotalSeq", Antibody))
+```
+
+The hastag antibodies used were:
+```{r hto_used}
+
+# lib name
+hto_used = samplesheet %>%
+    filter(Library_name == lib_name) %>%
+    pull(Antibody) %>%
+    unique
+
+hto_used
+```
+
+
+Load raw features
+```{r load_libs}
+# Load the PBMC dataset
+data <- Read10X(data.dir = paste0("../Data/",lib_name,"/raw_feature_bc_matrix/"))
+# for CellBender, do on cmd:
+# ptrepack --complevel 5 output.h5:/matrix output_filtered_seurat.h5:/matrix
+
+# output from Cellbender:
+
+#data <- Read10X(data.dir = paste0("../Data/",lib_name,"/sample_filtered_feature_bc_matrix/"))
+#data <- Read10X_h5(filename = "../Data/D33_D45_D47_CD4_Tcells/h5/output_filtered_seurat.h5")
+gex <- data[[1]]
+hto <- data[["Antibody Capture"]][rownames(data[["Antibody Capture"]]) %in% hto_used, ]
+
+# remove SCoV2 genes
+# plasmo.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7"),] # assay with Plasmodium genes
+# human.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7", invert = T),]
+
+
+# Initialize the Seurat object with the raw (non-normalized data).
+#mono <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
+options(Seurat.object.assay.calcn = TRUE)
+hustle_raw <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
+hustle_raw
+```
+
+
+```{r}
+# RNA cells in Seurat object
+rna_cells <- colnames(hustle_raw)
+
+# HTO barcodes
+hto_cells <- colnames(hto)
+
+# Overlap?
+length(intersect(rna_cells, hto_cells))
+
+common_cells <- intersect(colnames(hustle_raw), colnames(hto))
+hto_filtered <- hto[, common_cells]
+
+# Make sure order matches
+hto_filtered <- hto_filtered[, colnames(hustle_raw)]
+
+# Now it will work
+hustle_raw[["HTO"]] <- CreateAssayObject(counts = hto_filtered)
+
+```
+
+Load filtered features
+```{r load_libs}
+# Load the PBMC dataset
+data <- Read10X(data.dir = paste0("../Data/",lib_name,"/filtered_feature_bc_matrix/"))
+# for CellBender, do on cmd:
+# ptrepack --complevel 5 output.h5:/matrix output_filtered_seurat.h5:/matrix
+
+# output from Cellbender:
+
+#data <- Read10X(data.dir = paste0("../Data/",lib_name,"/sample_filtered_feature_bc_matrix/"))
+#data <- Read10X_h5(filename = "../Data/D33_D45_D47_CD4_Tcells/h5/output_filtered_seurat.h5")
+gex <- data[[1]]
+hto <- data[["Antibody Capture"]][rownames(data[["Antibody Capture"]]) %in% hto_used, ]
+
+# remove SCoV2 genes
+# plasmo.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7"),] # assay with Plasmodium genes
+# human.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7", invert = T),]
+
+
+# Initialize the Seurat object with the raw (non-normalized data).
+#mono <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
+options(Seurat.object.assay.calcn = TRUE)
+hustle_filtered <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
+hustle_filtered
+```
+
+
+```{r}
+# make UMI counts vs barcodes plot
+
+# Extract UMI counts - raw
+umi_counts_raw <- hustle_raw@meta.data$nCount_RNA
+umi_counts_raw <- sort(umi_counts_raw, decreasing = TRUE)  # Sort in descending order
+
+# Prepare data for plotting
+umi_data_raw <- data.frame(
+  Rank = 1:length(umi_counts_raw),
+  UMI = umi_counts_raw
+)
+
+threshold <- 700  # Example threshold
+p1 <- ggplot(umi_data_raw, aes(x = Rank, y = UMI)) +
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
+  annotate(
+    "text", 
+    x = max(umi_data_raw$Rank) * 0.8,  # Adjust x position (80% of the x-axis range)
+    y = threshold, 
+    label = paste("Threshold =", threshold),
+    color = "red",
+    hjust = 0,  # Horizontal alignment of the text
+    vjust = -0.5  # Vertical alignment of the text (above the line)
+  ) +
+  scale_y_continuous( limits=c(0,max(umi_data_raw$UMI)), 
+    breaks = c(1, 10, 100, 1000, 10000),
+                     labels = c("1", "10", "100", "1000", "10000")) +
+  scale_y_log10(
+   # breaks = c(1, 10, 100, 1000, 10000),  # Specify desired ticks
+    #labels = c("1", "10", "100", "1000", "10000")
+  ) +
+  scale_x_log10() +
+  labs(
+    x = "Barcodes (ranked)",
+    y = "UMI Counts",
+    title = "UMI Counts vs. Barcodes raw features"
+  ) +
+  theme_minimal()
+
+## filtered features
+
+# Extract UMI counts
+umi_counts_filtered <- hustle_filtered@meta.data$nCount_RNA
+umi_counts_filtered <- sort(umi_counts_filtered, decreasing = TRUE)  # Sort in descending order
+
+# Prepare data for plotting
+umi_data_filtered <- data.frame(
+  Rank = 1:length(umi_counts_filtered),
+  UMI = umi_counts_filtered
+)
+
+p2 <- ggplot(umi_data_filtered, aes(x = Rank, y = UMI)) +
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
+  annotate(
+    "text", 
+    x = max(umi_data_filtered$Rank) * 0.8,  # Adjust x position (80% of the x-axis range)
+    y = threshold, 
+    label = paste("Threshold =", threshold),
+    color = "red",
+    hjust = 0,  # Horizontal alignment of the text
+    vjust = -0.5  # Vertical alignment of the text (above the line)
+  ) +
+  scale_y_continuous( limits=c(0,max(umi_data_filtered$UMI)), 
+    breaks = c(1, 10, 100, 1000, 10000),
+                     labels = c("1", "10", "100", "1000", "10000")) +
+  scale_y_log10(
+   # breaks = c(1, 10, 100, 1000, 10000),  # Specify desired ticks
+   # labels = c("1", "10", "100", "1000", "10000")
+  ) +
+  scale_x_log10() +
+  labs(
+    x = "Barcodes (ranked)",
+    y = "UMI Counts",
+    title = "UMI Counts vs. Barcodes filtered features"
+  ) +
+  theme_minimal()
+
+p1 + p2
+#ggsave("UMI counts vs barcodes raw and filtered features.pdf")
+```
+
+```{r}
+# save barcodes with UMI counts above a certain threshold
+# Subset the Seurat object to retain only cells above the threshold
+threshold = 700
+seurat_filtered <- subset(hustle_raw, subset = nCount_RNA > threshold)
+
+saveRDS(seurat_filtered, "robjects/D13_D33_D45_D47_CD4_Naive_filtered_17k.rds")
+```
+
+```{r}
+
+# Display the number of cells retained
+cat("Number of cells above threshold:", ncol(seurat_filtered), "\n")
+
+# Optional: View metadata of the filtered cells
+head(seurat_filtered@meta.data)
+
+all_data <- rbind(
+  data.frame(UMI = hustle_raw@meta.data$nCount_RNA, Dataset = "All Barcodes"),
+  data.frame(UMI = seurat_filtered@meta.data$nCount_RNA, Dataset = "Filtered Barcodes")
+)
+
+# Create a faceted histogram
+ggplot(all_data, aes(x = UMI, fill = Dataset)) +
+  geom_histogram(
+    bins = 50, 
+    color = "black", 
+    alpha = 0.7
+  ) +
+  scale_x_log10() +  # Optional: log10 scale for better visualization
+  labs(
+    title = "UMI Counts Before and After Filtering",
+    x = "UMI Counts",
+    y = "Frequency"
+  ) +
+  facet_wrap(~Dataset) +
+  theme_minimal()
+
+
+#ggsave("UMI counts histogram raw and filtered features.pdf")
+
+```
+
+
+```{r}
+
+# # Set output directory
+# out_dir <- "robjects/D13_D33_D45_D47_CD4_Naive_filtered_17k"
+# 
+# counts_list <- list(
+#   `Gene Expression` = GetAssayData(hustle_raw, assay = "RNA", layer = "counts"),
+#   `Antibody Capture` = GetAssayData(hustle_raw, assay = "HTO", layer = "counts")
+# )
+# 
+# write10xCounts(
+#   "../counts/GEO_submission/", 
+#                x = obj[["RNA"]]$counts, 
+#                barcodes = colnames(obj[["RNA"]]$counts), 
+#                gene.id = rownames(obj[["RNA"]]$counts),
+#                gene.symbol = rownames(obj[["RNA"]]$counts),
+#                gene.type = "Gene Expression",
+#                genome = "GRCh38",
+#                type = "sparse",
+#                version = "3",
+#                library.ids = "orig.ident",
+#                overwrite = T
+#                  
+# )
+```
+
+```{r}
+# # using DropletUtils
+# sce <- read10xCounts(paste0("../Data/",lib_name,"/raw_feature_bc_matrix_unzipped/"))
+# sce
+# class(counts(sce))
+# 
+# set.seed(1000)
+# mol.info <- read10xMolInfo(paste0("../Data/",lib_name,"/molecule_info.h5"))
+# mol.info
+# 
+# # Computing barcode ranks
+# set.seed(0)
+# br.out <- barcodeRanks(sce, assay.type = "counts")
+# 
+# # Making a plot.
+# #png("knee_inflection_naive.png")
+# plot(br.out$rank, br.out$total, log="xy", xlab="Rank", ylab="Total")
+# o <- order(br.out$rank)
+# lines(br.out$rank[o], br.out$fitted[o], col="red")
+# 
+# abline(h=metadata(br.out)$knee, col="dodgerblue", lty=2)
+# abline(h=metadata(br.out)$inflection, col="forestgreen", lty=2)
+# legend("bottomleft", lty=2, col=c("dodgerblue", "forestgreen"), 
+#     legend=c("knee", "inflection"))
+# #dev.off()
+# 
+# # Detecting empty droplets
+# set.seed(100)
+# e.out <- emptyDrops(sce)
+# e.out
+# 
+# is.cell <- e.out$FDR <= 0.01
+# sum(is.cell, na.rm=TRUE)
+# 
+# table(Limited=e.out$Limited, Significant=is.cell)
+# 
+# plot(e.out$Total, -e.out$LogProb, col=ifelse(is.cell, "red", "black"),
+#     xlab="Total UMI count", ylab="-Log Probability")
+# 
+# # Filter based on FDR threshold
+# filtered_barcodes <- rownames(e.out[e.out$FDR <= 0.0001, ])
+# 
+# # Inspect the first few filtered barcodes
+# head(filtered_barcodes)
+```

@@ -31,6 +31,7 @@ library(cowplot)
 library(RColorBrewer)
 library(data.table)
 library(DropletUtils)
+library(scCustomize)
 #library(hdfr5)
 #remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')
 #library(DoubletFinder)
@@ -44,6 +45,6 @@ library(DropletUtils)
 
 ```
 
-```{r clonotype, child = 'clonotype_information.Rmd', echo = T, result = 'asis'}
+```{r process, child = 'post_demultiplex.Rmd', echo = T, result = 'asis'}
 
 ```

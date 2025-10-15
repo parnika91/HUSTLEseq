@@ -1,0 +1,208 @@
+---
+title: "Processing"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  toc: TRUE
+---
+
+
+```{r opts2, echo = F}
+knitr::opts_chunk$set(warning = F, message = F)
+# knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
+#knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+
+```
+
+
+# Step 3: Normalisation
+```{r}
+# After removing unwanted cells from the dataset, the next step is to normalize the data. By default, we employ a global-scaling normalization method “LogNormalize” that normalizes the feature expression measurements for each cell by the total expression, multiplies this by a scale factor (10,000 by default), and log-transforms the result. Normalized values are stored in pbmc[["RNA"]]@data.
+
+#hustle <- readRDS("robjects/D13_D33_D45_D47_CD4_Proliferated_L2_demultiplexed.rds")
+DefaultAssay(hustle) <- "RNA"
+hustle <- NormalizeData(hustle, normalization.method = "LogNormalize", scale.factor = 10000)
+
+# For clarity, in this previous line of code (and in future commands), we provide the default values for certain parameters in the function call. However, this isn’t required and the same behavior can be achieved with:
+```
+
+```{r}
+apply(hustle@assays$RNA@layers[["data"]],1,mean) -> gene.expression
+sort(gene.expression, decreasing = TRUE) -> gene.expression
+head(gene.expression, n=50)
+```
+
+```{r}
+hustle <- FindVariableFeatures(hustle, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(hustle), 10)
+top10
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(hustle)
+
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+plot2
+
+```
+
+```{r}
+# cell cycle regress out
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+hustle <- CellCycleScoring(hustle, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+DefaultAssay(hustle) <- "RNA"
+RidgePlot(hustle, features = c("PCNA", "TOP2A", "MCM6", "MKI67"), ncol = 2)
+
+# Running a PCA on cell cycle genes reveals, unsurprisingly, that cells separate entirely by
+# phase
+all.genes <- rownames(hustle)
+hustle1 <- ScaleData(hustle, features = all.genes)
+hustle1 <- RunPCA(hustle1, features = c(s.genes, g2m.genes))
+DimPlot(hustle1)
+```
+
+```{r}
+hustle <- ScaleData(hustle, vars.to.regress = c("S.Score", "G2M.Score"), features = all.genes)
+
+hustle1 <- RunPCA(hustle, features = c(s.genes, g2m.genes))
+DimPlot(hustle1)
+
+# Now, a PCA on the variable genes no longer returns components associated with cell cycle
+hustle <- RunPCA(hustle, features = VariableFeatures(hustle), nfeatures.print = 10)
+DimPlot(hustle)
+
+```
+
+```{r}
+VizDimLoadings(hustle, dims = 1:2, reduction = "pca")
+hustle <- JackStraw(hustle, num.replicate = 70)
+hustle <- ScoreJackStraw(hustle, dims = 1:10)
+JackStrawPlot(hustle, dims = 1:10)
+
+ElbowPlot(hustle)
+```
+
+```{r}
+DefaultAssay(hustle) <- "RNA"
+DimHeatmap(hustle, dims = 1, cells = 1000, balanced = TRUE)
+
+DimHeatmap(hustle, dims = 2:5, cells = 1000, balanced = TRUE)
+
+DimHeatmap(hustle, dims = 6:20, cells = 1000, balanced = TRUE)
+
+```
+
+```{r}
+dims_to_use = 20
+# We select the top 10 PCs for clustering and tSNE based on PCElbowPlot
+hustle <- FindNeighbors(hustle, reduction = "pca", dims = 1:dims_to_use)
+hustle <- FindClusters(hustle, resolution = 0.8, verbose = FALSE)
+hustle <- RunTSNE(hustle, reduction = "pca", dims = 1:dims_to_use)
+
+# Projecting singlet identities on TSNE visualization
+DimPlot(hustle, group.by = "HTO_classification")
+#DimPlot(hustle, group.by = "MULTI_classification")
+```
+
+singlets, doublets, negatives
+```{r dem_QC}
+#hustle <- subset(hustle, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+
+# Visualize QC metrics as a violin plot
+#VlnPlot(hustle.singlet, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+hustle@meta.data %>% 
+  ggplot(., aes(x = nFeature_RNA)) +
+  geom_histogram(bins = 50, colour = "white")
+
+hustle@meta.data %>% 
+  ggplot(., aes(x = nCount_RNA)) +
+  geom_histogram(bins = 50, colour = "white")
+
+hustle@meta.data %>% 
+  ggplot(., aes(x = percent.mt)) +
+  geom_histogram(bins = 50, colour = "white")
+
+# FeatureScatter is typically used to visualize feature-feature relationships, but can be used
+# for anything calculated by the object, i.e. columns in object metadata, PC scores etc.
+
+plot1 <- FeatureScatter(hustle, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(hustle, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+
+```{r}
+hustle <- RunUMAP(hustle, dims = 1:dims_to_use, reduction = "pca", reduction.name = "umap")
+DimPlot(hustle, group.by = "Donor_expt",reduction = "umap", label = "F")
+DimPlot(hustle, group.by = "seurat_clusters",reduction = "umap", label = "T")
+
+```
+
+```{r}
+hustle.markers <- FindAllMarkers(hustle, only.pos = T, min.pct = 0.25, logfc.threshold = 0.25)
+hustle.markers.top2 <- hustle.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 20, order_by = abs(avg_log2FC))
+hustle.markers.top2
+```
+
+```{r}
+
+FeaturePlot(hustle, features = sample(hustle.markers.top2$gene, 10))
+DimPlot(hustle, reduction = "umap", label = "T")
+hustle.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+DoHeatmap(hustle, features = top10$gene) + NoLegend() + theme(text = element_text(size = 7))
+```
+
+```{r}
+
+myPalette <- colorRampPalette(rev(brewer.pal(11, "Spectral")))
+
+# percent.mt on umap
+
+meta <- hustle@meta.data %>% 
+  rownames_to_column("Cell") %>% 
+  select("Cell", "nFeature_RNA", "percent.mt", "nCount_RNA")
+
+umap_embed <- hustle@reductions[["umap"]]@cell.embeddings %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Cell") %>%
+  left_join(., meta) %>% 
+  mutate(lib = lib_name)
+
+sc <- scale_colour_gradientn(colours = myPalette(100), limits=c(0, deadcell_mt_cutoff))
+ggplot(umap_embed, aes(umap_1, umap_2, colour = percent.mt)) +
+  geom_point(size = 0.3, alpha = 0.8) +
+  facet_wrap( ~ lib, ncol = 2, scales = "free") +
+  sc +
+  theme_bw()
+
+# nFeature on umap
+sc <- scale_colour_gradientn(colours = myPalette(100), limits=c(deadcell_nF_lowercutoff, deadcell_nF_uppercutoff))
+ggplot(umap_embed, aes(umap_1, umap_2, colour = nFeature_RNA)) +
+  geom_point(size = 0.3, alpha = 0.8) +
+  facet_wrap( ~ lib, ncol = 2, scales = "free") +
+  sc +
+  theme_bw()
+
+# nCount on umap
+sc <- scale_colour_gradientn(colours = myPalette(100), limits=c(min(umap_embed$nCount_RNA), max(umap_embed$nCount_RNA)))
+ggplot(umap_embed, aes(umap_1, umap_2, colour = nCount_RNA)) +
+  geom_point(size = 0.3, alpha = 0.8) +
+  facet_wrap( ~ lib, ncol = 2, scales = "free") +
+  sc +
+  theme_bw()
+```
+
+```{r}
+
+saveRDS(hustle, file = paste0("robjects/cellbender_CCregressed_", lib_name, "_nF_", deadcell_nF_lowercutoff, "_", deadcell_nF_uppercutoff, "_nC_",deadcell_nC_lowercutoff,"_post_demultiplexed_full_processed.rds"))
+
+```
+

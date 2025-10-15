@@ -1,0 +1,186 @@
+---
+title: "diff gene exp between naive and proliferated"
+output: html_notebook
+---
+
+
+```{r load_libraries, echo = F, message = F, warning = F}
+library(Seurat)
+library(patchwork)
+library(readxl)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(reshape2)
+library(broom)
+library(stringr)
+library(ggplot2)
+library(cowplot)
+library(RColorBrewer)
+library(data.table)
+library(DropletUtils)
+# devtools::install_github("satijalab/seurat", "seurat5")
+# devtools::install_github("satijalab/seurat-data", "seurat5")
+# BiocManager::install("DirichletMultinomial")
+# install.packages("hdf5r")
+# remotes::install_github("mojaveazure/seurat-disk")
+# BiocManager::install("TFBSTools")
+# remotes::install_github('satijalab/azimuth', ref = 'master')
+library(Azimuth)
+
+```
+
+```{r}
+integrated <- readRDS("robjects/naive_merged_with_integrated_proliferated_L1_L2.rds")
+```
+
+
+```{r}
+# group together the SPZ conditions and the RBC conditions
+
+integrated@meta.data <- integrated@meta.data %>% 
+  mutate(Condition = case_when(
+    orig.ident %in% "D13_D33_D45_D47_CD4_Naive" ~ "Naive",
+    .default = "Proliferated"
+  ))
+
+table(integrated$Condition)
+# Naive Proliferated 
+#  1506         7458 
+table(integrated$Condition, integrated$Donor_expt)
+            
+#               D13  D33  D45  D47
+# Naive         383  312  500  311
+# Proliferated  513  860  140 5945
+```
+
+```{r}
+# first get average expression
+pseudo_integrated <- AggregateExpression(
+  integrated, 
+  assays = "RNA", 
+  return.seurat = T, 
+  group.by = c("Condition", "Donor_expt"))
+
+tail(Cells(pseudo_integrated))
+
+# then, pseudobulk
+Idents(pseudo_integrated) <- "Condition"
+
+pseudo_integrated.de <- FindMarkers(
+   object = pseudo_integrated, 
+   ident.1 = "Proliferated", 
+   ident.2 = "Naive",
+   test.use = "DESeq2",
+   only.pos = F)
+
+pseudo_integrated.de <- pseudo_integrated.de %>% 
+  rownames_to_column("gene")
+
+write.table(pseudo_integrated.de,
+            "Proliferated_up_Naive_down_DEG.txt",
+            quote = F,
+            row.names = F)
+```
+
+```{r}
+pseudo_integrated.de <- na.omit(pseudo_integrated.de)
+
+png("Proliferated_up_Naive_down_DEG.png", height = 8, width = 7)
+EnhancedVolcano(pseudo_integrated.de,
+  lab = pseudo_integrated.de$gene,
+  x = 'avg_log2FC',
+  y = 'p_val_adj',
+  ylab = bquote(~-Log[10]~ 'adjusted p-value'),
+  #pCutoff = 10e-5,
+  #FCcutoff = 1.5,
+  pointSize = 3.0,
+  #boxedLabels = F,
+  #labSize = NA,
+  col=c('grey48', 'grey48', 'grey48', 'red3'),
+  colAlpha = 0.7,
+  xlim = c(-3.5,3.5),
+  title = 'Naive <-- vs --> Proliferated CD4 T cells',
+  gridlines.major = FALSE,
+  gridlines.minor = FALSE)
+dev.off()
+```
+
+```{r}
+# which upregulated gene in proliferated in present in every cell above a certain transcript abundance threshold?
+Idents(integrated) <- "Condition"
+naive_cells <- WhichCells(integrated, ident = "Naive")
+prolif_cells <- WhichCells(integrated, ident = "Proliferated")
+
+expr <- GetAssayData(integrated, slot = "data")  # normalized expression (log-normalized counts)
+expr_naive <- expr[, naive_cells]
+expr_prolif <- expr[, prolif_cells]
+
+prolif_rowSums <- rowSums(expr_prolif)
+naive_rowSums <- rowSums(expr_naive)
+ 
+# Proportion of cells where each gene is expressed (>0)
+prop_prolif <- rowSums(expr_prolif > 0) / ncol(expr_prolif)
+prop_naive  <- rowSums(expr_naive  > 0) / ncol(expr_naive)
+
+marker_genes <- rownames(expr)[prop_prolif >= 0.3 & prop_naive == 0]
+
+FeaturePlot(integrated, reduction = "umap_cca", features = "PCLAF")
+
+```
+```{r}
+# stratify based on PCLAF plot above and then find markers again
+integrated@meta.data <- integrated@meta.data %>% 
+  mutate(Cluster_stratify = case_when(
+    orig.ident %in% "D13_D33_D45_D47_CD4_Naive" ~ "Naive",
+    seurat_clusters %in% c("0", "5") ~ "Prolif_naive",
+    .default = "Proliferated"
+  ))
+
+pseudo_integrated <- AggregateExpression(
+  integrated, 
+  assays = "RNA", 
+  return.seurat = T, 
+  group.by = c("Cluster_stratify", "Donor_expt"))
+
+tail(Cells(pseudo_integrated))
+
+# then, pseudobulk
+Idents(pseudo_integrated) <- "Cluster_stratify"
+
+pseudo_integrated.de <- FindMarkers(
+   object = pseudo_integrated, 
+   ident.1 = "Proliferated", 
+   ident.2 = "Prolif-naive",
+   test.use = "DESeq2",
+   only.pos = F)
+
+pseudo_integrated.de <- pseudo_integrated.de %>% 
+  rownames_to_column("gene")
+
+
+Idents(integrated) <- "Cluster_stratify"
+naive_cells <- WhichCells(integrated, ident = "Naive")
+prolif_naive_cells <- WhichCells(integrated, ident = "Prolif_naive")
+proliferated_cells <- WhichCells(integrated, ident = "Proliferated")
+
+expr <- GetAssayData(integrated, slot = "data")  # normalized expression (log-normalized counts)
+expr_naive <- expr[, naive_cells]
+expr_prolif_naive <- expr[, prolif_naive_cells]
+expr_prolif <- expr[, proliferated_cells]
+
+prolif_rowSums <- rowSums(expr_prolif)
+prolif_naive_rowSums <- rowSums(expr_prolif_naive)
+naive_rowSums <- rowSums(expr_naive)
+ 
+# Proportion of cells where each gene is expressed (>0)
+prop_prolif <- rowSums(expr_prolif > 0) / ncol(expr_prolif)
+prop_prolif_naive <- rowSums(expr_prolif_naive > 0) / ncol(expr_prolif_naive)
+prop_naive  <- rowSums(expr_naive  > 0) / ncol(expr_naive)
+
+marker_genes <- rownames(expr)[(prop_prolif <= 0.2 | prop_prolif_naive <= 0.2) & prop_naive >= 0.6]
+
+FeaturePlot(integrated, reduction = "umap_cca", features = "IFNG")
+DimPlot(integrated, reduction = "umap_cca", group.by = "Cluster_stratify")
+```
+

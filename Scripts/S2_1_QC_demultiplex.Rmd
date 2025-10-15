@@ -7,30 +7,17 @@ output:
   toc: TRUE
 ---
 
-```{r, echo = F}
+
+```{r opts1, echo = F}
 knitr::opts_chunk$set(warning = F, message = F)
 # knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
 #knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
 
 ```
 
-<!-- ```{r load_libraries, echo = F, message = F, warning = F} -->
-<!-- library(Seurat) -->
-<!-- library(patchwork) -->
-<!-- library(readxl) -->
-<!-- library(tidyverse) -->
-<!-- library(ggplot2) -->
-<!-- library(ggpubr) -->
-<!-- library(reshape2) -->
-<!-- library(broom) -->
-<!-- library(stringr) -->
-<!-- # remotes::install_github('chris-mcginnis-ucsf/DoubletFinder') -->
-<!-- # library(DoubletFinder) -->
-<!-- ``` -->
-
 # Step 1: Load filtered features, barcode, matrices and visualise quality
 
-Lib: D13_D33_D45_D47_CD4_Naive
 
 ```{r datadiscovery, echo = F}
 
@@ -41,8 +28,8 @@ colnames(samplesheet) <- sapply(c(1:ncol(samplesheet)), function(x) paste0(sampl
 
 samplesheet <- samplesheet %>% 
   filter(!row_number() %in% c(1)) %>% 
-  rename(Library_name = `NameLibrary Name`) %>% 
-  rename(Antibody = `Multiplex Source Tag...31`)
+  dplyr::rename(Library_name = `NameLibrary Name`) %>% 
+  dplyr::rename(Antibody = `Multiplex Source Tag...31`)
 
 # table(samplesheet$`Multiplex Tag`, samplesheet$Library_name)
 #
@@ -53,7 +40,7 @@ samplesheet <- samplesheet %>%
 # lib_name = "D33_D45_D47_CD4_Tcells"
 # lib_name = "D13_D33_D45_D47_CD4_Naive"
 # lib_name = "D13_D33_D45_D47_CD4_Proliferated_L1"
-lib_name = "D13_D33_D45_D47_CD4_Naive"
+ lib_name = "D13_D33_D45_D47_CD4_Proliferated_L2"
 d <- samplesheet %>% filter(Library_name == lib_name)
 
 
@@ -74,17 +61,43 @@ hto_used = samplesheet %>%
 hto_used
 ```
 
+```{r}
+
+# for Naive, to include more cells from raw eatures 
+seurat_filtered <- readRDS("robjects/D13_D33_D45_D47_CD4_Naive_filtered_17k.rds")
+# a. Filter by min.features (per cell):
+
+seurat_filtered <- subset(seurat_filtered, subset = nFeature_RNA >= 200)
+
+#########into cellSNP-lite
+#raw_features <- as.data.frame(colnames(seurat_filtered))
+#write_tsv(raw_features, "hustleseq_naive_cellbarcodes.tsv")
+
+# b. Filter by min.cells (per gene):
+
+# Count how many cells each gene is expressed in
+gene_cell_counts <- rowSums(seurat_filtered[["RNA"]]@layers$counts > 0)
+
+# Keep genes expressed in at least 3 cells
+genes_to_keep <- names(gene_cell_counts[gene_cell_counts >= 3])
+
+# Subset RNA assay
+hustle <- subset(seurat_filtered, features = genes_to_keep)
+
+
+```
+
 Number of features (genes) and samples (cells) in this library
 ```{r load_libs}
 # Load the PBMC dataset
-data <- Read10X(data.dir = paste0("../Data/",lib_name,"/raw_feature_bc_matrix/"))
+#data <- Read10X(data.dir = paste0("../Data/",lib_name,"/raw_feature_bc_matrix/"))
 # for CellBender, do on cmd:
 # ptrepack --complevel 5 output.h5:/matrix output_filtered_seurat.h5:/matrix
 
 # output from Cellbender:
-
 #data <- Read10X(data.dir = paste0("../Data/",lib_name,"/sample_filtered_feature_bc_matrix/"))
-#data <- Read10X_h5(filename = "../Data/D33_D45_D47_CD4_Tcells/h5/output_filtered_seurat.h5")
+data <- Read10X_h5(filename =  paste0("../Data/",lib_name,"/h5/cellbender_seurat.h5"))
+#data <- Read10X(data.dir = paste0("../Data/",lib_name,"/filtered_feature_bc_matrix/"))
 gex <- data[[1]]
 hto <- data[["Antibody Capture"]][rownames(data[["Antibody Capture"]]) %in% hto_used, ]
 
@@ -100,177 +113,13 @@ hustle <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, mi
 hustle
 ```
 
-```{r}
-# make UMI counts vs barcodes plot
+<!-- ```{r} -->
+<!-- # for manually filtered naive library: -->
+<!-- hustle <- readRDS("robjects/D13_D33_D45_D47_CD4_Naive_filtered_17k.rds") -->
 
-# Extract UMI counts
-umi_counts <- hustle@meta.data$nCount_RNA
-umi_counts <- sort(umi_counts, decreasing = TRUE)  # Sort in descending order
-
-# Prepare data for plotting
-umi_data <- data.frame(
-  Rank = 1:length(umi_counts),
-  UMI = umi_counts
-)
-
-threshold <- 700  # Example threshold
-p1 <- ggplot(umi_data, aes(x = Rank, y = UMI)) +
-  geom_point(size = 0.5) +
-  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
-  annotate(
-    "text", 
-    x = max(umi_data$Rank) * 0.8,  # Adjust x position (80% of the x-axis range)
-    y = threshold, 
-    label = paste("Threshold =", threshold),
-    color = "red",
-    hjust = 0,  # Horizontal alignment of the text
-    vjust = -0.5  # Vertical alignment of the text (above the line)
-  ) +
-  scale_y_continuous( limits=c(0,max(umi_data$UMI)), 
-    breaks = c(1, 10, 100, 1000, 10000),
-                     labels = c("1", "10", "100", "1000", "10000")) +
-  scale_y_log10(
-   # breaks = c(1, 10, 100, 1000, 10000),  # Specify desired ticks
-    #labels = c("1", "10", "100", "1000", "10000")
-  ) +
-  scale_x_log10() +
-  labs(
-    x = "Barcodes (ranked)",
-    y = "UMI Counts",
-    title = "UMI Counts vs. Barcodes raw features"
-  ) +
-  theme_minimal()
-
-## filtered features
-
-# Extract UMI counts
-umi_counts <- hustle@meta.data$nCount_RNA
-umi_counts <- sort(umi_counts, decreasing = TRUE)  # Sort in descending order
-
-# Prepare data for plotting
-umi_data <- data.frame(
-  Rank = 1:length(umi_counts),
-  UMI = umi_counts
-)
-
-p2 <- ggplot(umi_data, aes(x = Rank, y = UMI)) +
-  geom_point(size = 0.5) +
-  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
-  annotate(
-    "text", 
-    x = max(umi_data$Rank) * 0.8,  # Adjust x position (80% of the x-axis range)
-    y = threshold, 
-    label = paste("Threshold =", threshold),
-    color = "red",
-    hjust = 0,  # Horizontal alignment of the text
-    vjust = -0.5  # Vertical alignment of the text (above the line)
-  ) +
-  scale_y_continuous( limits=c(0,max(umi_data$UMI)), 
-    breaks = c(1, 10, 100, 1000, 10000),
-                     labels = c("1", "10", "100", "1000", "10000")) +
-  scale_y_log10(
-   # breaks = c(1, 10, 100, 1000, 10000),  # Specify desired ticks
-   # labels = c("1", "10", "100", "1000", "10000")
-  ) +
-  scale_x_log10() +
-  labs(
-    x = "Barcodes (ranked)",
-    y = "UMI Counts",
-    title = "UMI Counts vs. Barcodes filtered features"
-  ) +
-  theme_minimal()
-
-p1 + p2
-ggsave("UMI counts vs barcodes raw and filtered features.pdf")
-```
+<!-- ``` -->
 
 ```{r}
-# save barcodes with UMI counts above a certain threshold
-# Subset the Seurat object to retain only cells above the threshold
-seurat_filtered <- subset(hustle, subset = nCount_RNA > threshold)
-
-# Display the number of cells retained
-cat("Number of cells above threshold:", ncol(seurat_filtered), "\n")
-
-# Optional: View metadata of the filtered cells
-head(seurat_filtered@meta.data)
-
-all_data <- rbind(
-  data.frame(UMI = hustle@meta.data$nCount_RNA, Dataset = "All Barcodes"),
-  data.frame(UMI = seurat_filtered@meta.data$nCount_RNA, Dataset = "Filtered Barcodes")
-)
-
-# Create a faceted histogram
-ggplot(all_data, aes(x = UMI, fill = Dataset)) +
-  geom_histogram(
-    bins = 50, 
-    color = "black", 
-    alpha = 0.7
-  ) +
-  scale_x_log10() +  # Optional: log10 scale for better visualization
-  labs(
-    title = "UMI Counts Before and After Filtering",
-    x = "UMI Counts",
-    y = "Frequency"
-  ) +
-  facet_wrap(~Dataset) +
-  theme_minimal()
-
-
-ggsave("UMI counts histogram raw and filtered features.pdf")
-
-```
-
-```{r}
-# using DropletUtils
-sce <- read10xCounts(dir.name = paste0("../Data/",lib_name,"/raw_feature_bc_matrix_unzipped/"))
-sce
-class(counts(sce))
-
-set.seed(1000)
-mol.info <- read10xMolInfo(paste0("../Data/",lib_name,"/molecule_info.h5"))
-mol.info
-
-# Computing barcode ranks
-set.seed(0)
-br.out <- barcodeRanks(sce, assay.type = "counts")
-
-# Making a plot.
-png("knee_inflection_naive.png")
-plot(br.out$rank, br.out$total, log="xy", xlab="Rank", ylab="Total")
-o <- order(br.out$rank)
-lines(br.out$rank[o], br.out$fitted[o], col="red")
-
-abline(h=metadata(br.out)$knee, col="dodgerblue", lty=2)
-abline(h=metadata(br.out)$inflection, col="forestgreen", lty=2)
-legend("bottomleft", lty=2, col=c("dodgerblue", "forestgreen"), 
-    legend=c("knee", "inflection"))
-dev.off()
-
-# Detecting empty droplets
-set.seed(100)
-e.out <- emptyDrops(sce)
-e.out
-
-is.cell <- e.out$FDR <= 0.0001
-sum(is.cell, na.rm=TRUE)
-
-table(Limited=e.out$Limited, Significant=is.cell)
-
-plot(e.out$Total, -e.out$LogProb, col=ifelse(is.cell, "red", "black"),
-    xlab="Total UMI count", ylab="-Log Probability")
-
-# Filter based on FDR threshold
-filtered_barcodes <- rownames(e.out[e.out$FDR <= 0.0001, ], na.rm = T)
-
-# Inspect the first few filtered barcodes
-head(filtered_barcodes)
-```
-
-
-```{r}
-
-hustle <- seurat_filtered
 hustle[["percent.mt"]] <- PercentageFeatureSet(hustle, pattern = "^MT-")
 # ribo genes
 ribo.genes <- grep("^RP[SL][[:digit:]]|^RPLP[[:digit:]]|^RPSA",rownames(hustle),value = TRUE)
@@ -310,9 +159,26 @@ hustle.demul@meta.data <- hustle.demul@meta.data %>%
 
 ## didn't need the next line for CellBender output:
 Idents(hustle.demul) <- "donor_id"
+VlnPlot(hustle.demul, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.1, log = F)
+ggplot(hustle.demul@meta.data, aes(x = nCount_RNA)) + geom_histogram(binwidth = 50)
+ggplot(hustle.demul@meta.data, aes(x = nCount_RNA)) + 
+  geom_histogram(binwidth = 50) +
+  facet_wrap( ~ donor_id) +
+  theme_bw()
+
 hustle.demul <- subset(x = hustle.demul, idents = c("doublet", "unassigned"), invert = T)
 
 hustle <- hustle.demul
+
+hustle <- subset(hustle, subset = !is.na(donor_id))
+
+VlnPlot(hustle, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.1, log = F)
+ggplot(hustle@meta.data, aes(x = nCount_RNA)) + geom_histogram(colour = "white", bins = 50) + theme_bw()
+ggplot(hustle@meta.data, aes(x = nCount_RNA)) + 
+  geom_histogram(colour = "white", bins = 50) +
+  facet_wrap( ~ donor_id) +
+  theme_bw()
+
 
 # identical(meta$cell, rownames(mono@meta.data))
 # [1] TRUE
@@ -333,7 +199,7 @@ joint.bcs <- intersect(rownames(hustle.singlet.donor@meta.data), colnames(hto))
 
 # Subset RNA and HTO counts by joint cell barcodes
 #pbmc@assays$RNA <- pbmc@assays$RNA[, joint.bcs]
-hustle.hto <- as.matrix(hto[,joint.bcs])
+hustle.hto <- as.matrix(hto[,joint.bcs]) #hustle.hto <- as.matrix(hustle[["HTO"]]@counts[,joint.bcs])
 
 ## # Add HTO data as a new assay independent from RNA
 Idents(hustle.singlet.donor) <- rownames(hustle.singlet.donor@meta.data)
@@ -347,8 +213,11 @@ hustle.singlet.donor <- NormalizeData(hustle.singlet.donor, assay = "HTO", norma
 # documentation for HTODemux()) to adjust the threshold for classification Here we are using
 # the default settings
 hustle.singlet.donor <- HTODemux(hustle.singlet.donor, assay = "HTO", positive.quantile = 0.99) #, positive.quantile = 0.99
-#hustle.singlet.donor <- MULTIseqDemux(hustle.singlet.donor, assay = "HTO")
+#hustle.singlet.donor <- MULTIseqDemux(hustle.singlet.donor, assay = "HTO") # for naive
+RidgePlot(hustle.singlet.donor, assay = "HTO", features = rownames(hustle.singlet.donor[["HTO"]]), ncol = 4)
 
+hustle.singlet.donor@meta.data <- hustle.singlet.donor@meta.data %>%
+  dplyr::rename(HTO_classification.global = MULTI_classification)
 ```
 
 
@@ -360,8 +229,6 @@ table(hustle.singlet.donor$HTO_classification.global)
 
 Idents(hustle.singlet.donor) <- "HTO_classification.global"
 #Idents(hustle.singlet.donor) <- "MULTI_classification"
-VlnPlot(hustle.singlet.donor, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.1, log = F)
-#VlnPlot(hustle.singlet.donor, features = c("percent.mt", "percent.plasmo"), pt.size = 0.1, log = TRUE)
 hustle.h <- hustle.singlet.donor
 
 # First, we will remove negative cells from the object
@@ -371,17 +238,37 @@ hustle.h <- hustle.singlet.donor
 if(any(hustle.h$HTO_classification.global == "Negative") == T)
    hustle.h <- subset(hustle.h, idents = c("Negative"), invert = TRUE)
 
-# Calculate a tSNE embedding of the HTO data
-DefaultAssay(hustle.h) <- "HTO"
-hustle.h <- ScaleData(hustle.h, features = rownames(hustle.h),
-    verbose = FALSE)
-hustle.h <- RunPCA(hustle.h, features = rownames(hustle.h), approx = FALSE)
-hustle.h <- RunTSNE(hustle.h, check_duplicates = F)
-Idents(hustle.h) <- 'HTO_classification'
+# For MULTIdemux
+
+#Extract singlets
+hashtags <- gsub("Total_Seq", "TotalSeq", hto_used)
+hashtags <- gsub("_", "-", hto_used)
+
+hustle.h@meta.data <- hustle.h@meta.data %>%
+  mutate(Cell_state = case_when(
+    as.character(HTO_classification.global) %in% hashtags ~ "Singlet",
+    .default = HTO_classification.global
+  ))
+
+Idents(hustle.h) <- "Cell_state"
+
+VlnPlot(hustle.h, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.1, log = F)
+ggplot(hustle.singlet.donor@meta.data, aes(x = nCount_RNA)) + geom_histogram(binwidth = 50)
+ggplot(hustle.singlet.donor@meta.data, aes(x = nCount_RNA)) + 
+  geom_histogram(binwidth = 50) +
+  facet_wrap( ~ HTO_classification.global) +
+  theme_bw()
+
+ggplot(hustle.singlet.donor@meta.data, aes(x = nFeature_RNA)) + geom_histogram(binwidth = 50)
+ggplot(hustle.singlet.donor@meta.data, aes(x = nFeature_RNA)) + 
+  geom_histogram(binwidth = 50) +
+  facet_wrap( ~ HTO_classification.global) +
+  theme_bw()
+
+hustle.h <- subset(hustle.h, subset = Cell_state == "Singlet")
+
 #Idents(hustle.h) <- 'MULTI_classification'
 #DimPlot(hustle.h)
-
-
 
 # To increase the efficiency of plotting, you can subsample cells using the num.cells argument
 #HTOHeatmap(hustle, assay = "HTO", ncells = 500)
@@ -389,54 +276,27 @@ Idents(hustle.h) <- 'HTO_classification'
 
 Features and samples after assigning cells to donors and retaining only singlets
 ```{r}
-Idents(hustle.singlet.donor) = "HTO_classification"
-# Extract singlets
-#hashtags <- gsub("Total_Seq", "TotalSeq", hto_used)
-hashtags <- gsub("_", "-", hto_used)
-
-# hustle.singlet.donor@meta.data <- hustle.singlet.donor@meta.data %>%
-#   mutate(Cell_state = case_when(
-#     as.character(MULTI_classification) %in% hashtags ~ "Singlet",
-#     .default = MULTI_classification
-#   ))
-
-#Idents(hustle.singlet.donor) <- "Cell_state"
-
-#hustle.singlet <- subset(hustle.singlet.donor, subset = Cell_state == "Singlet")
+Idents(hustle.singlet.donor) = "HTO_classification.global"
 
 # For HTODemux:
 hustle.singlet.donor = hustle.h
 Idents(hustle.singlet.donor) = "HTO_classification.global"
-hustle.singlet <- subset(hustle.singlet.donor, idents = "Singlet")
-hustle.singlet
+hustle.h <- subset(hustle.singlet.donor, idents = "Singlet")
+hustle.h
 
-# donorid <- samplesheet %>%
-#   filter(Library_name == lib_name) %>%
-#   dplyr::rename(HTO_classification = Antibody) %>%
-#   #mutate(HTO_classification = gsub("_", "-", HTO_classification)) %>%
-#   dplyr::rename(Group = `Patient Group`) %>%
-#   select(Group, HTO_classification) %>%
-#   distinct()
+# Calculate a tSNE embedding of the HTO data
+DefaultAssay(hustle.h) <- "HTO"
+hustle.h <- ScaleData(hustle.h, features = rownames(hustle.h),
+    verbose = FALSE)
+hustle.h <- RunPCA(hustle.h, features = rownames(hustle.h), approx = FALSE)
+hustle.h <- RunTSNE(hustle.h, check_duplicates = F)
 
-# donorid <- samplesheet %>%
-#   filter(Library_name == lib_name) %>%
-#   dplyr::rename(MULTI_classification = Antibody) %>%
-#   mutate(MULTI_classification = gsub("_", "-", MULTI_classification)) %>%
-#   dplyr::rename(Group = `Patient Group`) %>%
-#   select(Group, MULTI_classification) %>%
-#   distinct()
-
-hustle.demul <- hustle.singlet
-# hustle.demul@meta.data <- hustle.demul@meta.data %>% 
-#   left_join(., donorid)
-
-rownames(hustle.demul@meta.data) <- rownames(hustle.singlet@meta.data)
-#rownames(hustle.singlet@meta.data)
-hustle <- hustle.singlet
+hustle <- hustle.h
 
 ```
 
 QC for number of RNA molecules (nCount_RNA), number of features (nFeature_RNA), mitochondrial RNA percent denoting dead cells (percent.mt) and ribosomal genes percentage (NA cells because of unmatched CellBender cell filtration)
+
 ```{r Visviolin}
 # Visualize QC metrics as a violin plot
 DefaultAssay(hustle) <- "RNA"
@@ -444,25 +304,25 @@ Idents(hustle) <- "orig.ident"
 VlnPlot(hustle, features=c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 3) 
 VlnPlot(hustle, features=c("percent.ribo")) 
 
-ggplot(hustle@meta.data, aes(x = nFeature_RNA)) + geom_histogram(binwidth = 50)
+ggplot(hustle@meta.data, aes(x = nFeature_RNA)) + geom_histogram(colour = "white", bins = 50)
 #ggplot(mono@meta.data, aes(x = nFeature_RNA)) + geom_histogram(binwidth = 20) + xlim(c(0, 600))
 
 ggplot(hustle@meta.data, aes(x = nFeature_RNA)) + 
   geom_histogram(binwidth = 50) +
   facet_wrap( ~ donor_id)
 
-ggplot(hustle@meta.data, aes(x = nCount_RNA)) + geom_histogram(binwidth = 50)
+ggplot(hustle@meta.data, aes(x = nCount_RNA)) + geom_histogram(colour = "white",bins = 50)
 ggplot(hustle@meta.data, aes(x = nCount_RNA)) + 
   geom_histogram(binwidth = 50) +
   facet_wrap( ~ donor_id)
 #ggplot(mono@meta.data, aes(x = nCount_RNA)) + geom_histogram(binwidth = 50) + xlim(c(0, 5000))
 
-ggplot(hustle@meta.data, aes(x = percent.mt)) + geom_histogram(binwidth = 1)
+ggplot(hustle@meta.data, aes(x = percent.mt)) + geom_histogram(colour = "white",bins = 50)
 ggplot(hustle@meta.data, aes(x = percent.mt)) + 
   geom_histogram(binwidth = 1) +
   facet_wrap( ~ donor_id)
 
-ggplot(hustle@meta.data, aes(x = percent.ribo)) + geom_histogram(binwidth = 1)
+ggplot(hustle@meta.data, aes(x = percent.ribo)) + geom_histogram(colour = "white",bins = 50)
 ggplot(hustle@meta.data, aes(x = percent.ribo)) + 
   geom_histogram(binwidth = 1) +
   facet_wrap( ~ donor_id)
@@ -475,9 +335,9 @@ ggplot(hustle@meta.data, aes(x = percent.ribo)) +
 ```
 
 ```{r}
-deadcell_nF_lowercutoff <- 250
-deadcell_nF_uppercutoff <- 3500
-deadcell_nC_lowercutoff <- 1250
+deadcell_nF_lowercutoff <- 500
+deadcell_nF_uppercutoff <- 4000
+deadcell_nC_lowercutoff <- 150
 #weirdcell_ribo_uppercutoff <- 40
 deadcell_mt_cutoff <- 12
 
@@ -505,6 +365,12 @@ ggplot(hustle.meta, aes(x = percent.ribo, fill = factor(is.dead))) +
   geom_histogram(bins = 50, position = "identity", alpha = 0.5)
 ```
 
+```{r}
+ggplot(hustle.meta, aes(x = nFeature_RNA, y = nCount_RNA)) +
+  geom_point() +
+  theme_bw()
+```
+
 
 ```{r filtering}
 hustle1 <- subset(hustle, subset =  nFeature_RNA >= deadcell_nF_lowercutoff & 
@@ -523,6 +389,8 @@ hustle = hustle1
 Assigning hashtags and peptide pools to cells
 ```{r}
 # assigning cell to donor and pool
+hustle@meta.data <- hustle@meta.data %>%
+  dplyr::rename(HTO_classification = HTO_classification.global)
 
 hustle@meta.data <- hustle@meta.data %>% 
   mutate(Donor_expt = case_when(
@@ -550,12 +418,19 @@ hustle@meta.data <- hustle@meta.data %>%
 
 # get donor id from SNP for assigning D33, D45, D47
 
-donorid_snp_hto <- hustle@meta.data %>% 
-  dplyr::select(Donor_expt, donor_id) %>% 
-  filter(Donor_expt != "") %>% 
-  filter(!donor_id %in% c("doublet", "unassigned")) %>% 
-  group_by(donor_id) %>% 
-  count(Donor_expt, donor_id)
+# donorid_snp_hto <- hustle@meta.data %>% 
+#   as.data.frame() %>% 
+#   dplyr::select(Donor_expt, donor_id) %>% 
+#   filter(Donor_expt != "") %>% 
+#   filter(!donor_id %in% c("doublet", "unassigned")) %>% 
+#   #group_by(donor_id) %>% 
+#   count(Donor_expt, donor_id) #Donor_expt, donor_id
+
+df <- hustle@meta.data
+df <- df[df$Donor_expt != "", ]
+df <- df[!df$donor_id %in% c("doublet", "unassigned"), ]
+
+donorid_snp_hto <- dplyr::count(df, Donor_expt, donor_id)
 
 #Put them back in hustle meta data
 
@@ -582,7 +457,13 @@ table(hustle$Donor_expt)
 table(hustle$pep.pool)
 table(hustle$Donor_expt, hustle$pep.pool)
 table(hustle$donor_pep.pool)
+table(hustle$donor_id, hustle$Donor_expt)
+table(hustle$HTO_classification, hustle$Donor_expt)
+table(hustle$HTO_classification, hustle$donor_id)
 
+```
 
+```{r}
+#saveRDS(hustle, file = paste0("robjects/", lib_name, "_demultiplexed.rds"))
 ```
 
