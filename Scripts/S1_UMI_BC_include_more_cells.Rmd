@@ -24,18 +24,10 @@ library(cowplot)
 library(RColorBrewer)
 library(data.table)
 library(DropletUtils)
-#library(hdfr5)
-#remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')
-#library(DoubletFinder)
-# devtools::install_github("satijalab/seurat-data")
-#devtools::install_github("satijalab/azimuth")
-#library(Azimuth)
-# library(SeuratData)
 ```
 
 ```{r datadiscovery, echo = F}
 
-#samplesheet <- read_excel("../Data/a_2024_HUSTLEseq_scRNAseq_nucleotide_sequencing.xlsx")
 samplesheet <- read_excel("../Data/a_2024_HUSTLEseq_scRNAseq_nucleotide_sequencing_round2.xlsx")
 
 colnames(samplesheet) <- sapply(c(1:ncol(samplesheet)), function(x) paste0(samplesheet[1,x], colnames(samplesheet)[x], collapse = ""))
@@ -45,15 +37,6 @@ samplesheet <- samplesheet %>%
   dplyr::rename(Library_name = `NameLibrary Name`) %>% 
   dplyr::rename(Antibody = `Multiplex Source Tag...31`)
 
-# table(samplesheet$`Multiplex Tag`, samplesheet$Library_name)
-#
-# table(samplesheet$Condition_name, samplesheet$Library_name)
-#
-# libraries <- unique(samplesheet$Library_name)
-#
-# lib_name = "D33_D45_D47_CD4_Tcells"
-# lib_name = "D13_D33_D45_D47_CD4_Naive"
-# lib_name = "D13_D33_D45_D47_CD4_Proliferated_L1"
 lib_name = "D13_D33_D45_D47_CD4_Naive"
 d <- samplesheet %>% filter(Library_name == lib_name)
 
@@ -75,28 +58,14 @@ hto_used = samplesheet %>%
 hto_used
 ```
 
-
 Load raw features
 ```{r load_libs}
 # Load the PBMC dataset
 data <- Read10X(data.dir = paste0("../Data/",lib_name,"/raw_feature_bc_matrix/"))
-# for CellBender, do on cmd:
-# ptrepack --complevel 5 output.h5:/matrix output_filtered_seurat.h5:/matrix
 
-# output from Cellbender:
-
-#data <- Read10X(data.dir = paste0("../Data/",lib_name,"/sample_filtered_feature_bc_matrix/"))
-#data <- Read10X_h5(filename = "../Data/D33_D45_D47_CD4_Tcells/h5/output_filtered_seurat.h5")
 gex <- data[[1]]
 hto <- data[["Antibody Capture"]][rownames(data[["Antibody Capture"]]) %in% hto_used, ]
 
-# remove SCoV2 genes
-# plasmo.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7"),] # assay with Plasmodium genes
-# human.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7", invert = T),]
-
-
-# Initialize the Seurat object with the raw (non-normalized data).
-#mono <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
 options(Seurat.object.assay.calcn = TRUE)
 hustle_raw <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
 hustle_raw
@@ -128,23 +97,10 @@ Load filtered features
 ```{r load_libs}
 # Load the PBMC dataset
 data <- Read10X(data.dir = paste0("../Data/",lib_name,"/filtered_feature_bc_matrix/"))
-# for CellBender, do on cmd:
-# ptrepack --complevel 5 output.h5:/matrix output_filtered_seurat.h5:/matrix
 
-# output from Cellbender:
-
-#data <- Read10X(data.dir = paste0("../Data/",lib_name,"/sample_filtered_feature_bc_matrix/"))
-#data <- Read10X_h5(filename = "../Data/D33_D45_D47_CD4_Tcells/h5/output_filtered_seurat.h5")
 gex <- data[[1]]
 hto <- data[["Antibody Capture"]][rownames(data[["Antibody Capture"]]) %in% hto_used, ]
 
-# remove SCoV2 genes
-# plasmo.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7"),] # assay with Plasmodium genes
-# human.gex <- gex[grep(rownames(gex), pattern = "^gene-PF3D7", invert = T),]
-
-
-# Initialize the Seurat object with the raw (non-normalized data).
-#mono <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
 options(Seurat.object.assay.calcn = TRUE)
 hustle_filtered <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
 hustle_filtered
@@ -276,77 +232,4 @@ ggplot(all_data, aes(x = UMI, fill = Dataset)) +
 
 #ggsave("UMI counts histogram raw and filtered features.pdf")
 
-```
-
-
-```{r}
-
-# # Set output directory
-# out_dir <- "robjects/D13_D33_D45_D47_CD4_Naive_filtered_17k"
-# 
-# counts_list <- list(
-#   `Gene Expression` = GetAssayData(hustle_raw, assay = "RNA", layer = "counts"),
-#   `Antibody Capture` = GetAssayData(hustle_raw, assay = "HTO", layer = "counts")
-# )
-# 
-# write10xCounts(
-#   "../counts/GEO_submission/", 
-#                x = obj[["RNA"]]$counts, 
-#                barcodes = colnames(obj[["RNA"]]$counts), 
-#                gene.id = rownames(obj[["RNA"]]$counts),
-#                gene.symbol = rownames(obj[["RNA"]]$counts),
-#                gene.type = "Gene Expression",
-#                genome = "GRCh38",
-#                type = "sparse",
-#                version = "3",
-#                library.ids = "orig.ident",
-#                overwrite = T
-#                  
-# )
-```
-
-```{r}
-# # using DropletUtils
-# sce <- read10xCounts(paste0("../Data/",lib_name,"/raw_feature_bc_matrix_unzipped/"))
-# sce
-# class(counts(sce))
-# 
-# set.seed(1000)
-# mol.info <- read10xMolInfo(paste0("../Data/",lib_name,"/molecule_info.h5"))
-# mol.info
-# 
-# # Computing barcode ranks
-# set.seed(0)
-# br.out <- barcodeRanks(sce, assay.type = "counts")
-# 
-# # Making a plot.
-# #png("knee_inflection_naive.png")
-# plot(br.out$rank, br.out$total, log="xy", xlab="Rank", ylab="Total")
-# o <- order(br.out$rank)
-# lines(br.out$rank[o], br.out$fitted[o], col="red")
-# 
-# abline(h=metadata(br.out)$knee, col="dodgerblue", lty=2)
-# abline(h=metadata(br.out)$inflection, col="forestgreen", lty=2)
-# legend("bottomleft", lty=2, col=c("dodgerblue", "forestgreen"), 
-#     legend=c("knee", "inflection"))
-# #dev.off()
-# 
-# # Detecting empty droplets
-# set.seed(100)
-# e.out <- emptyDrops(sce)
-# e.out
-# 
-# is.cell <- e.out$FDR <= 0.01
-# sum(is.cell, na.rm=TRUE)
-# 
-# table(Limited=e.out$Limited, Significant=is.cell)
-# 
-# plot(e.out$Total, -e.out$LogProb, col=ifelse(is.cell, "red", "black"),
-#     xlab="Total UMI count", ylab="-Log Probability")
-# 
-# # Filter based on FDR threshold
-# filtered_barcodes <- rownames(e.out[e.out$FDR <= 0.0001, ])
-# 
-# # Inspect the first few filtered barcodes
-# head(filtered_barcodes)
 ```

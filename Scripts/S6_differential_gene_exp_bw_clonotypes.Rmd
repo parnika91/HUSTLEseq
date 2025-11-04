@@ -26,6 +26,7 @@ library(DropletUtils)
 # BiocManager::install("TFBSTools")
 # remotes::install_github('satijalab/azimuth', ref = 'master')
 library(Azimuth)
+library(EnhancedVolcano)
 
 ```
 
@@ -107,7 +108,10 @@ EnhancedVolcano(clonotype_marker_68_24,
   title = 'Epitope 24 <-- vs --> 68',
   gridlines.major = FALSE,
   gridlines.minor = FALSE)
+
+#ggsave("Volcano_cell_with_epi24_vs_68.pdf", height = 12, width = 12, dpi = 300)
 ```
+
 ```{r}
 clonotype_marker_68_28 <- FindMarkers(integrated_cl,
                                 group.by = "Epitope.1", 
@@ -132,6 +136,9 @@ EnhancedVolcano(clonotype_marker_68_28,
   title = 'Epitope 28 <-- vs --> 68',
   gridlines.major = FALSE,
   gridlines.minor = FALSE)
+
+#ggsave("Volcano_cell_with_epi28_vs_68.pdf", height = 12, width = 12, dpi = 300)
+
 ```
 
 ```{r}
@@ -184,5 +191,10 @@ EnhancedVolcano(clonotype_marker_68_10,
   title = 'Epitope 10 <-- vs --> 68',
   gridlines.major = FALSE,
   gridlines.minor = FALSE)
+```
+
+```{r}
+# T-cells mapped to a single clone or different clones
+mapped <- subset(integrated_cl, subset = Mapped == TRUE)
 ```
 

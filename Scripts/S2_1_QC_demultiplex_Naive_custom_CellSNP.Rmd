@@ -1,16 +1,12 @@
 ---
-title: "VDJ sequencing - HUSTLE-Seq - quality control"
-output:
-  html_document:
-    df_print: paged
-  pdf_document: default
-  toc: TRUE
+title: "QC_Demultiplex_Naive_custom_cellSNP"
+output: html_notebook
 ---
-
 
 ```{r opts1, echo = F}
 knitr::opts_chunk$set(warning = F, message = F)
 knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+
 ```
 
 # Step 1: Load filtered features, barcode, matrices and visualise quality
@@ -20,14 +16,16 @@ knitr::opts_chunk$set(fig.width=12, fig.height=8)
 
 samplesheet <- read_excel("../Data/a_2024_HUSTLEseq_scRNAseq_nucleotide_sequencing_round2.xlsx")
 
-colnames(samplesheet) <- sapply(c(1:ncol(samplesheet)), function(x) paste0(samplesheet[1,x], colnames(samplesheet)[x], collapse = ""))
+colnames(samplesheet) <- sapply(c(1:ncol(samplesheet)), function(x) paste0(samplesheet[1,x], 
+                                                                           colnames(samplesheet)[x], 
+                                                                           collapse = ""))
 
 samplesheet <- samplesheet %>% 
   filter(!row_number() %in% c(1)) %>% 
   dplyr::rename(Library_name = `NameLibrary Name`) %>% 
   dplyr::rename(Antibody = `Multiplex Source Tag...31`)
 
- lib_name = "D13_D33_D45_D47_CD4_Naive"
+lib_name = "D13_D33_D45_D47_CD4_Naive"
 d <- samplesheet %>% filter(Library_name == lib_name)
 
 
@@ -48,21 +46,31 @@ hto_used = samplesheet %>%
 hto_used
 ```
 
-Number of features (genes) and samples (cells) in this library
-```{r load_libs}
-# for CellBender, do on cmd:
-# ptrepack --complevel 5 output.h5:/matrix output_filtered_seurat.h5:/matrix
 
-# output from Cellbender:
-data <- Read10X_h5(filename =  paste0("../Data/",lib_name,"/h5/cellbender_seurat.h5"))
-gex <- data[[1]]
-hto <- data[["Antibody Capture"]][rownames(data[["Antibody Capture"]]) %in% hto_used, ]
+```{r}
 
-# Initialize the Seurat object with the raw (non-normalized data).
-options(Seurat.object.assay.calcn = TRUE)
-hustle <- CreateSeuratObject(counts = gex, project = lib_name, min.cells = 3, min.features = 200)
-hustle
+# for Naive, to include more cells from raw features 
+seurat_filtered <- readRDS("robjects/D13_D33_D45_D47_CD4_Naive_filtered_17k.rds")
+# a. Filter by min.features (per cell):
+
+seurat_filtered <- subset(seurat_filtered, subset = nFeature_RNA >= 200)
+
+#########into cellSNP
+#raw_features <- as.data.frame(colnames(seurat_filtered))
+#write_tsv(raw_features, "hustleseq_naive_cellbarcodes.tsv")
+
+# b. Filter by min.cells (per gene):
+
+# Count how many cells each gene is expressed in
+gene_cell_counts <- rowSums(seurat_filtered[["RNA"]]@layers$counts > 0)
+
+# Keep genes expressed in at least 3 cells
+genes_to_keep <- names(gene_cell_counts[gene_cell_counts >= 3])
+
+# Subset RNA assay
+hustle <- subset(seurat_filtered, features = genes_to_keep)
 ```
+
 
 ```{r}
 hustle[["percent.mt"]] <- PercentageFeatureSet(hustle, pattern = "^MT-")
@@ -86,7 +94,7 @@ a) match donor ID with samples (cells)
 
 # add vireo output to meta data
 hustle.demul <- hustle
-snp <- read.delim(paste("../Data/",lib_name,"/vireo_result/donor_ids.tsv", sep = ""))
+snp <- read.delim(paste("../Data/",lib_name,"/vireo_result_rerun_PM/donor_ids.tsv", sep = ""))
 meta <- hustle.demul@meta.data %>% 
   tibble::rownames_to_column("cell") %>% 
   left_join(snp)
@@ -115,10 +123,7 @@ hustle <- hustle.demul
 hustle <- subset(hustle, subset = !is.na(donor_id))
 
 VlnPlot(hustle, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.1, log = F)
-ggplot(hustle@meta.data, aes(x = nCount_RNA)) + 
-  geom_histogram(colour = "white", bins = 50) + 
-  theme_bw()
-
+ggplot(hustle@meta.data, aes(x = nCount_RNA)) + geom_histogram(colour = "white", bins = 50) + theme_bw()
 ggplot(hustle@meta.data, aes(x = nCount_RNA)) + 
   geom_histogram(colour = "white", bins = 50) +
   facet_wrap( ~ donor_id) +
@@ -138,10 +143,10 @@ b) Demultiplexing with hastag oligos -> identify cells with tagged barcodes (# o
 # filtered the cells for you, but perform this step for clarity.
 
 hustle.singlet.donor <- hustle
-joint.bcs <- intersect(rownames(hustle.singlet.donor@meta.data), colnames(hto))
+joint.bcs <- rownames(hustle.singlet.donor@meta.data)
 
 # Subset RNA and HTO counts by joint cell barcodes
-hustle.hto <- as.matrix(hto[,joint.bcs]) 
+hustle.hto <- as.matrix(hustle[["HTO"]]@counts[,joint.bcs])
 
 ## # Add HTO data as a new assay independent from RNA
 Idents(hustle.singlet.donor) <- rownames(hustle.singlet.donor@meta.data)
@@ -150,16 +155,13 @@ hustle.singlet.donor[["HTO"]] <- CreateAssayObject(counts = hustle.hto)
 # Normalize HTO data, here we use centered log-ratio (CLR) transformation
 hustle.singlet.donor <- NormalizeData(hustle.singlet.donor, assay = "HTO", normalization.method = "CLR")
 
+
 # If you have a very large dataset we suggest using k_function = 'clara'. This is a k-medoid
 # clustering function for large applications You can also play with additional parameters (see
 # documentation for HTODemux()) to adjust the threshold for classification Here we are using
 # the default settings
 hustle.singlet.donor <- HTODemux(hustle.singlet.donor, assay = "HTO", positive.quantile = 0.99) #, positive.quantile = 0.99
-#hustle.singlet.donor <- MULTIseqDemux(hustle.singlet.donor, assay = "HTO") # for naive
 RidgePlot(hustle.singlet.donor, assay = "HTO", features = rownames(hustle.singlet.donor[["HTO"]]), ncol = 3)
-
-hustle.singlet.donor@meta.data <- hustle.singlet.donor@meta.data %>%
-  dplyr::rename(HTO_classification.global = MULTI_classification)
 ```
 
 
@@ -171,9 +173,9 @@ table(hustle.singlet.donor$HTO_classification.global)
 Idents(hustle.singlet.donor) <- "HTO_classification.global"
 hustle.h <- hustle.singlet.donor
 
-# First, we will remove negative cells from the object
 if(any(hustle.h$HTO_classification.global == "Negative") == T)
    hustle.h <- subset(hustle.h, idents = c("Negative"), invert = TRUE)
+
 
 #Extract singlets
 hashtags <- gsub("Total_Seq", "TotalSeq", hto_used)
@@ -188,15 +190,13 @@ hustle.h@meta.data <- hustle.h@meta.data %>%
 Idents(hustle.h) <- "Cell_state"
 
 VlnPlot(hustle.h, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.1, log = F)
-ggplot(hustle.singlet.donor@meta.data, aes(x = nCount_RNA)) + 
-  geom_histogram(binwidth = 50)
+ggplot(hustle.singlet.donor@meta.data, aes(x = nCount_RNA)) + geom_histogram(binwidth = 50)
 ggplot(hustle.singlet.donor@meta.data, aes(x = nCount_RNA)) + 
   geom_histogram(binwidth = 50) +
   facet_wrap( ~ HTO_classification.global) +
   theme_bw()
 
-ggplot(hustle.singlet.donor@meta.data, aes(x = nFeature_RNA)) + 
-  geom_histogram(binwidth = 50)
+ggplot(hustle.singlet.donor@meta.data, aes(x = nFeature_RNA)) + geom_histogram(binwidth = 50)
 ggplot(hustle.singlet.donor@meta.data, aes(x = nFeature_RNA)) + 
   geom_histogram(binwidth = 50) +
   facet_wrap( ~ HTO_classification.global) +
@@ -204,11 +204,6 @@ ggplot(hustle.singlet.donor@meta.data, aes(x = nFeature_RNA)) +
 
 hustle.h <- subset(hustle.h, subset = Cell_state == "Singlet")
 
-#Idents(hustle.h) <- 'MULTI_classification'
-#DimPlot(hustle.h)
-
-# To increase the efficiency of plotting, you can subsample cells using the num.cells argument
-#HTOHeatmap(hustle, assay = "HTO", ncells = 500)
 ```
 
 Features and samples after assigning cells to donors and retaining only singlets
@@ -265,9 +260,53 @@ ggplot(hustle@meta.data, aes(x = percent.ribo)) +
 ```
 
 ```{r}
+# make UMI counts vs barcodes plot
+
+# Extract UMI counts - raw
+umi_counts_raw <- hustle.h@meta.data$nCount_RNA
+umi_counts_raw <- sort(umi_counts_raw, decreasing = TRUE)  # Sort in descending order
+
+# Prepare data for plotting
+umi_data_raw <- data.frame(
+  Rank = 1:length(umi_counts_raw),
+  UMI = umi_counts_raw
+)
+
+threshold <- 700  # Example threshold
+p1 <- ggplot(umi_data_raw, aes(x = Rank, y = UMI)) +
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
+  annotate(
+    "text", 
+    x = max(umi_data_raw$Rank) * 0.8,  # Adjust x position (80% of the x-axis range)
+    y = threshold, 
+    label = paste("Threshold =", threshold),
+    color = "red",
+    hjust = 0,  # Horizontal alignment of the text
+    vjust = -0.5  # Vertical alignment of the text (above the line)
+  ) +
+  # scale_y_continuous( limits=c(0,max(umi_data_raw$UMI)), 
+  #   breaks = c(1, 10, 100, 1000, 10000),
+  #                    labels = c("1", "10", "100", "1000", "10000")) +
+  scale_y_log10(
+    breaks = c(300, 1000, 3000, 10000),  # Specify desired ticks
+    labels = c("300", "1000", "3000", "10000")
+  ) +
+  scale_x_log10() +
+  labs(
+    x = "Barcodes (ranked)",
+    y = "UMI Counts",
+    title = "UMI Counts vs. Barcodes"
+  ) +
+  theme_minimal()
+p1
+#ggsave("UMI counts vs barcodes raw and filtered features.pdf")
+```
+
+```{r}
 deadcell_nF_lowercutoff <- 150
 deadcell_nF_uppercutoff <- 1200
-deadcell_nC_lowercutoff <- 150
+deadcell_nC_lowercutoff <- 500
 deadcell_mt_cutoff <- 12
 
 hustle.meta <- hustle@meta.data %>% 
@@ -299,13 +338,12 @@ ggplot(hustle.meta, aes(x = nFeature_RNA, y = nCount_RNA)) +
   theme_bw()
 ```
 
-
 ```{r filtering}
 hustle1 <- subset(hustle, subset =  nFeature_RNA >= deadcell_nF_lowercutoff & 
                     nFeature_RNA <= deadcell_nF_uppercutoff & 
                     percent.mt <= deadcell_mt_cutoff &
                     nCount_RNA >= deadcell_nC_lowercutoff 
-                    )
+                    ) #nCount_RNA >= 1000 &
 hustle1
 VlnPlot(hustle1, features=c("nCount_RNA", "nFeature_RNA", "percent.mt", "percent.ribo"), group.by = "orig.ident", ncol = 2) 
 
@@ -313,11 +351,55 @@ hustle = hustle1
 
 ```
 
+
+```{r}
+# make UMI counts vs barcodes plot
+
+# Extract UMI counts - raw
+umi_counts_raw <- hustle@meta.data$nCount_RNA
+umi_counts_raw <- sort(umi_counts_raw, decreasing = TRUE)  # Sort in descending order
+
+# Prepare data for plotting
+umi_data_raw <- data.frame(
+  Rank = 1:length(umi_counts_raw),
+  UMI = umi_counts_raw
+)
+
+threshold <- 700  # Example threshold
+p1 <- ggplot(umi_data_raw, aes(x = Rank, y = UMI)) +
+  geom_point(size = 0.5) +
+  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
+  annotate(
+    "text", 
+    x = max(umi_data_raw$Rank) * 0.8,  # Adjust x position (80% of the x-axis range)
+    y = threshold, 
+    label = paste("Threshold =", threshold),
+    color = "red",
+    hjust = 0,  # Horizontal alignment of the text
+    vjust = -0.5  # Vertical alignment of the text (above the line)
+  ) +
+  # scale_y_continuous( limits=c(0,max(umi_data_raw$UMI)), 
+  #   breaks = c(1, 10, 100, 1000, 10000),
+  #                    labels = c("1", "10", "100", "1000", "10000")) +
+  scale_y_log10(
+    breaks = c(300, 1000, 3000, 10000),  # Specify desired ticks
+    labels = c("300", "1000", "3000", "10000")
+  ) +
+  scale_x_log10() +
+  labs(
+    x = "Barcodes (ranked)",
+    y = "UMI Counts",
+    title = "UMI Counts vs. Barcodes"
+  ) +
+  theme_minimal()
+p1
+#ggsave("UMI counts vs barcodes raw and filtered features.pdf")
+```
+
+
 Assigning hashtags and peptide pools to cells
 ```{r}
 # assigning cell to donor and pool
-hustle@meta.data <- hustle@meta.data %>%
-  dplyr::rename(HTO_classification = HTO_classification.global)
 
 hustle@meta.data <- hustle@meta.data %>% 
   mutate(Donor_expt = case_when(
@@ -343,7 +425,8 @@ hustle@meta.data <- hustle@meta.data %>%
     .default = ""
   ))
 
-# get donor id from SNP for assigning D13, D33, D45, D47
+# get donor id from SNP for assigning D33, D45, D47
+
 df <- hustle@meta.data
 df <- df[df$Donor_expt != "", ]
 df <- df[!df$donor_id %in% c("doublet", "unassigned"), ]
@@ -358,10 +441,10 @@ hustle@meta.data <- hustle@meta.data %>%
     HTO_classification == "TotalSeq-C-2" ~ "D33",
     HTO_classification == "TotalSeq-C-3" ~ "D45",
     HTO_classification == "TotalSeq-C-4" ~ "D47",
-    donor_id == "donor0" ~ "D47",
-    donor_id == "donor1" ~ "D33",
+    donor_id == "donor0" ~ "D33",
+    donor_id == "donor3" ~ "D47",
     donor_id == "donor2" ~ "D13",
-    donor_id == "donor3" ~ "D45",
+    donor_id == "donor1" ~ "D45",
     .default = ""
   )) %>% 
   filter(!is.na(donor_id)) %>% 
@@ -377,8 +460,3 @@ table(hustle$HTO_classification, hustle$Donor_expt)
 table(hustle$HTO_classification, hustle$donor_id)
 
 ```
-
-```{r}
-#saveRDS(hustle, file = paste0("robjects/", lib_name, "_demultiplexed.rds"))
-```
-

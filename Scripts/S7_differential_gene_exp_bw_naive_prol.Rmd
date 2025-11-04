@@ -128,6 +128,7 @@ marker_genes <- rownames(expr)[prop_prolif >= 0.3 & prop_naive == 0]
 FeaturePlot(integrated, reduction = "umap_cca", features = "PCLAF")
 
 ```
+
 ```{r}
 # stratify based on PCLAF plot above and then find markers again
 integrated@meta.data <- integrated@meta.data %>% 
