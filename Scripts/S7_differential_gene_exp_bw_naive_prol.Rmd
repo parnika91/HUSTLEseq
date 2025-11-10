@@ -27,11 +27,12 @@ library(DropletUtils)
 # BiocManager::install("TFBSTools")
 # remotes::install_github('satijalab/azimuth', ref = 'master')
 library(Azimuth)
+library(EnhancedVolcano)
 
 ```
 
 ```{r}
-integrated <- readRDS("robjects/naive_merged_with_integrated_proliferated_L1_L2.rds")
+integrated <- readRDS("robjects/naive_merged_with_integrated_proliferated_L1_L2_custom_naive_cellsnp.rds")
 ```
 
 
@@ -86,13 +87,13 @@ write.table(pseudo_integrated.de,
 ```{r}
 pseudo_integrated.de <- na.omit(pseudo_integrated.de)
 
-png("Proliferated_up_Naive_down_DEG.png", height = 8, width = 7)
+png("Proliferated_up_Naive_down_DEG.png", height = 20, width = 18, units = "cm", res = 300)
 EnhancedVolcano(pseudo_integrated.de,
   lab = pseudo_integrated.de$gene,
   x = 'avg_log2FC',
   y = 'p_val_adj',
   ylab = bquote(~-Log[10]~ 'adjusted p-value'),
-  #pCutoff = 10e-5,
+  pCutoff = 10e-2,
   #FCcutoff = 1.5,
   pointSize = 3.0,
   #boxedLabels = F,

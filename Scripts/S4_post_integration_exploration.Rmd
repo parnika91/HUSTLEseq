@@ -12,7 +12,7 @@ output:
 knitr::opts_chunk$set(warning = F, message = F)
 # knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
 #knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE)
-knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+knitr::opts_chunk$set(fig.width=10, fig.height=8) 
 
 ```
 
@@ -45,7 +45,7 @@ library(plyr)
 ```
 
 ```{r}
-integrated <- readRDS("robjects/naive_merged_with_integrated_proliferated_L1_L2.rds")
+integrated <- readRDS("robjects/naive_merged_with_integrated_proliferated_L1_L2_custom_naive_cellsnp.rds")
 ```
 
 ```{r}
@@ -55,13 +55,14 @@ table(integrated$orig.ident, integrated$Donor_expt)
 ```
 
 
-```{r}
-mu_nC <- ddply(integrated@meta.data, c("orig.ident","Donor_expt"), summarise, grp.mean=median(nCount_RNA))
+```{r, fig.width=10, fig.height=6}
+mu_nC <- ddply(integrated@meta.data, c("orig.ident","Donor_expt"), 
+               summarise, 
+               grp.mean=median(nCount_RNA))
 
-nC <- ggplot(integrated@meta.data, aes(x = nFeature_RNA, fill = Donor_expt)) +
-  geom_histogram(bins = 50, alpha = 0.6, position = "identity") + #fill = "skyblue",  color = "white",
+nC <- ggplot(integrated@meta.data, aes(x = nCount_RNA, fill = Donor_expt)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") + 
   facet_wrap(~ orig.ident) +
-  #geom_vline(data = mu_nC, aes(xintercept = grp.mean, colour = Donor_expt), color = "salmon", linetype = "dashed", linewidth = 0.4) +
   theme_minimal(base_size = 10) +
   labs(
     x = "nCount_RNA",
@@ -69,12 +70,13 @@ nC <- ggplot(integrated@meta.data, aes(x = nFeature_RNA, fill = Donor_expt)) +
     title = "nCount_RNA distribution by library"
   )
 
-mu_nF <- ddply(integrated@meta.data, c("orig.ident","Donor_expt"), summarise, grp.mean=median(nFeature_RNA))
+mu_nF <- ddply(integrated@meta.data, c("orig.ident","Donor_expt"), 
+               summarise, 
+               grp.mean=median(nFeature_RNA))
 
 nF <- ggplot(integrated@meta.data, aes(x = nFeature_RNA, fill = Donor_expt)) +
-  geom_histogram(bins = 50, alpha = 0.6, position = "identity") + #fill = "skyblue",  color = "white",
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") + 
   facet_wrap(~ orig.ident) +
-  #geom_vline(data = mu_nF, aes(xintercept = grp.mean, colour = Donor_expt), color = "salmon", linetype = "dashed", linewidth = 0.4) +
   theme_minimal(base_size = 10) +
   labs(
     x = "nFeature_RNA",
@@ -82,12 +84,13 @@ nF <- ggplot(integrated@meta.data, aes(x = nFeature_RNA, fill = Donor_expt)) +
     title = "nFeature_RNA distribution by library"
   )
 
-mu_mt <- ddply(integrated@meta.data, c("orig.ident","Donor_expt"), summarise, grp.mean=median(percent.mt))
+mu_mt <- ddply(integrated@meta.data, c("orig.ident","Donor_expt"), 
+               summarise, 
+               grp.mean=median(percent.mt))
 
-mt <- ggplot(integrated@meta.data, aes(x = nFeature_RNA, fill = Donor_expt)) +
-  geom_histogram(bins = 50, alpha = 0.6, position = "identity") + #fill = "skyblue",  color = "white",
+mt <- ggplot(integrated@meta.data, aes(x = percent.mt, fill = Donor_expt)) +
+  geom_histogram(bins = 50, alpha = 0.6, position = "identity") + 
   facet_wrap(~ orig.ident) +
- # geom_vline(data = mu_mt, aes(xintercept = grp.mean, colour = Donor_expt), color = "salmon", linetype = "dashed", linewidth = 0.4) +
   theme_minimal(base_size = 10) +
   labs(
     x = "percent.MT",
@@ -95,12 +98,8 @@ mt <- ggplot(integrated@meta.data, aes(x = nFeature_RNA, fill = Donor_expt)) +
     title = "percent.MT distribution by library"
   )
 
-nC
 
-nF
-
-mt
-#(nC + nF / mt)
+(nC + nF / mt)
 
 #ggsave("QCmetric_integrated.object.png", dpi = 300, width = 25, height = 20, units = "cm")
 ```
@@ -124,16 +123,12 @@ FeaturePlot(integrated, features = c("XIST"))
 <!-- ``` -->
 
 ```{r}
-# make fewer clusters
-# integrated <- FindClusters(integrated, resolution = 0.7)
-# DimPlot(integrated, group.by = "seurat_clusters",reduction = "umap_cca", label = "T") + ggtitle("res=0.7")
-
 integrated <- FindClusters(integrated, resolution = 0.5)
 DimPlot(integrated, group.by = "seurat_clusters",reduction = "umap_cca", label = "T") + ggtitle("res=0.5")
 ```
 
 ```{r}
-DimPlot(integrated, group.by = "orig.ident", ,reduction = "umap_cca", label = F)
+DimPlot(integrated, group.by = "orig.ident", ,reduction = "umap_cca", label = F, alpha = 0.7)
 #ggsave("umap_integrated_orig.ident.png", dpi = 300, width = 25, units = "cm")
 
 ```
@@ -143,10 +138,6 @@ DimPlot(integrated, group.by = "Donor_expt", ,reduction = "umap_cca", label = F)
 #ggsave("umap_integrated_donor.png", dpi = 300, width = 25, units = "cm")
 
 table(integrated$Donor_expt)
-
- # D13  D33  D45  D47 
- # 889 1525  621 7090 
-
 ```
 
 
@@ -157,7 +148,7 @@ lib_name = "integrated"
 
 meta <- integrated@meta.data %>% 
   rownames_to_column("Cell") %>% 
-  select("Cell", "nFeature_RNA", "percent.mt", "nCount_RNA") #, "percent.plasmo"
+  select("Cell", "nFeature_RNA", "percent.mt", "nCount_RNA")
 
 umap_embed <- integrated@reductions[["umap_cca"]]@cell.embeddings %>% 
   as.data.frame() %>% 
@@ -246,7 +237,7 @@ ggplot(qc_df, aes(x = nFeature_RNA, y = nCount_RNA, size = nCount_RNA, colour = 
 ```
 
 ## Top 10 markers in each cluster
-```{r}
+```{r, fig.height=12}
 integrated <- JoinLayers(integrated)
 imm.comb.markers <- FindAllMarkers(integrated, only.pos = T, min.pct = 0.25, logfc.threshold = 0.25)
 
@@ -254,7 +245,9 @@ imm.comb.markers %>%
     group_by(cluster) %>%
     top_n(n = 15, wt = avg_log2FC) -> top15
 FeaturePlot(integrated, features = sample(top15$gene, 10), reduction = "umap_cca", ncol = 2)
+```
 
+```{r}
 #DT::datatable(top15)
 
 #write.csv2(top15, "integrated_data_noTBcells_cluster_markers_cellbender_onlyhuman.xlsx", row.names = F, quote = F)
@@ -264,7 +257,9 @@ imm.comb.markers %>%
     top_n(n = 10, wt = avg_log2FC) -> top10
 
 DimPlot(integrated, group.by = "seurat_clusters",reduction = "umap_cca", label = "T") + ggtitle("res=0.5")
+```
 
+```{r, fig.width=10, fig.height = 10}
 DefaultAssay(integrated) <- "RNA"
 DoHeatmap(integrated, features = top10$gene)
 #ggsave("heatmap_integrated_s.clusters_markers_res0.5_9clusters.png", dpi = 300, width = 30, height = 25, units = "cm")

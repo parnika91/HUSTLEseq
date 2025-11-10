@@ -1,7 +1,17 @@
 ---
 title: "Differential gene expression"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
+
+```{r opts, echo = F}
+knitr::opts_chunk$set(warning = F, message = F)
+# knitr::opts_chunk$set(fig.pos = "!H", out.extra = "")
+#knitr::opts_chunk$set(tidy.opts=list(width.cutoff=80),tidy=TRUE)
+knitr::opts_chunk$set(fig.width=10, fig.height=8) 
+
+```
 
 ```{r load_libraries, echo = F, message = F, warning = F}
 library(Seurat)
@@ -31,7 +41,7 @@ library(EnhancedVolcano)
 ```
 
 ```{r}
-integrated <- readRDS("robjects/naive_merged_with_integrated_proliferated_L1_L2.rds")
+integrated <- readRDS("robjects/naive_merged_with_integrated_proliferated_L1_L2_custom_naive_cellsnp.rds")
 clonotype <- read.csv2("../Data/HUSTLEseq_mapped_clean.csv")
 ```
 

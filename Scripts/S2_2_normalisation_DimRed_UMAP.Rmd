@@ -202,7 +202,7 @@ ggplot(umap_embed, aes(umap_1, umap_2, colour = nCount_RNA)) +
 
 ```{r}
 
-saveRDS(hustle, file = paste0("robjects/cellbender_CCregressed_", lib_name, "_nF_", deadcell_nF_lowercutoff, "_", deadcell_nF_uppercutoff, "_nC_",deadcell_nC_lowercutoff,"_post_demultiplexed_full_processed.rds"))
+saveRDS(hustle, file = paste0("robjects/cellbender_CCregressed_", lib_name, "_custom_cellSNP_nF_", deadcell_nF_lowercutoff, "_", deadcell_nF_uppercutoff, "_nC_",deadcell_nC_lowercutoff,"_post_demultiplexed_full_processed.rds"))
 
 ```
 

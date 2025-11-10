@@ -31,7 +31,7 @@ library(DropletUtils)
 ```
 
 ```{r}
-naive <- readRDS("robjects/cellbender_CCregressed_D13_D33_D45_D47_CD4_Naive_nF_250_1200_nC_500_post_demultiplexed_full_processed.rds")
+naive <- readRDS("robjects/cellbender_CCregressed_D13_D33_D45_D47_CD4_Naive_custom_cellSNP__nF_500_1200_nC_1200_post_demultiplexed_full_processed.rds")
 prol1 <- readRDS("robjects/cellbender_CCregressed_D13_D33_D45_D47_CD4_Proliferated_L1_nF_500_6000_nC_250_post_demultiplexed_full_processed.rds")
 prol2 <- readRDS("robjects/cellbender_CCregressed_D13_D33_D45_D47_CD4_Proliferated_L2_nF_500_4000_nC_150_post_demultiplexed_full_processed.rds")
 ```
@@ -155,6 +155,6 @@ rownames(merge_all_libs@meta.data) <- new_barcodes
 
 
 ```{r}
-saveRDS(merge_all_libs, file = "robjects/naive_merged_with_integrated_proliferated_L1_L2.rds")
+saveRDS(merge_all_libs, file = "robjects/naive_merged_with_integrated_proliferated_L1_L2_custom_naive_cellsnp.rds")
 ```
 

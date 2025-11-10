@@ -304,9 +304,9 @@ p1
 ```
 
 ```{r}
-deadcell_nF_lowercutoff <- 150
+deadcell_nF_lowercutoff <- 500
 deadcell_nF_uppercutoff <- 1200
-deadcell_nC_lowercutoff <- 500
+deadcell_nC_lowercutoff <- 1200
 deadcell_mt_cutoff <- 12
 
 hustle.meta <- hustle@meta.data %>% 

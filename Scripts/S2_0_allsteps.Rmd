@@ -41,10 +41,10 @@ library(scCustomize)
 # library(SeuratData)
 ```
 
-```{r QC, child = 'QC.Rmd', echo = T, result = 'asis'}
+```{r QC, child = 'S2_1_QC_demultiplex_Naive_custom_CellSNP.Rmd', echo = T, result = 'asis'}
 
 ```
 
-```{r process, child = 'post_demultiplex.Rmd', echo = T, result = 'asis'}
+```{r process, child = 'S2_2_normalisation_DimRed_UMAP.Rmd', echo = T, result = 'asis'}
 
 ```
